@@ -20,16 +20,34 @@ cmdline_of() {
   powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=$1\").CommandLine" 2>/dev/null | tr -d '\r'
 }
 
-# $1=pid $2=1 se e o PID do run.pid (aceita o node de scripts/dev.mjs)
+# true se algum ancestral de $1 e o PID do run.pid
+has_launcher_ancestor() {
+  local lp; lp="$(cat "$PID_FILE" 2>/dev/null | tr -d '\r\n ')"
+  [ -z "$lp" ] && return 1
+  local r
+  r="$(powershell.exe -NoProfile -Command "\$c=$1; \$n=0; while (\$c -and \$n -lt 32) { \$pp=(Get-CimInstance Win32_Process -Filter \"ProcessId=\$c\").ParentProcessId; if (\$pp -eq $lp) { 'yes'; break }; \$c=\$pp; \$n++ }" 2>/dev/null | tr -d '\r\n ')"
+  [ "$r" = "yes" ]
+}
+
+# $1=pid $2=1 se e o PID do run.pid (o proprio lancador e sempre nosso)
+# Dono da porta e aceito se: CommandLine contem a pasta do app, ou um ancestral e o lancador.
 is_ours() {
+  [ "$2" = "1" ] && [ -n "$(cmdline_of "$1")" ] && return 0
   local cl; cl="$(cmdline_of "$1")"
   [ -z "$cl" ] && return 1
-  if echo "$cl" | grep -qi 'llm-monitor'; then return 0; fi
-  if [ "$2" = "1" ] && echo "$cl" | grep -qiE 'scripts[\/]dev\.mjs'; then return 0; fi
+  local fwd="$APP_DIR" back; back="$(cygpath -w "$APP_DIR" 2>/dev/null)"
+  local fwd2; fwd2="$(cygpath -m "$APP_DIR" 2>/dev/null)"
+  if echo "$cl" | grep -qiF -e "$fwd" -e "$fwd2" -e "$back"; then return 0; fi
+  has_launcher_ancestor "$1" && return 0
   return 1
 }
 
-open_browser() { cmd.exe /c start "" "$URL" >/dev/null 2>&1 || explorer.exe "$URL" >/dev/null 2>&1; }
+# abre o navegador sem herdar o console (cmd /c start segura o terminal)
+open_browser() {
+  powershell.exe -NoProfile -Command "Start-Process '$URL'" </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null
+  return 0
+}
 
 print_pids() {
   echo "PIDs: backend($BACK_PORT)=$(port_pids $BACK_PORT | tr '\n' ' ') front($FRONT_PORT)=$(port_pids $FRONT_PORT | tr '\n' ' ')"
@@ -64,17 +82,19 @@ cmd_stop() {
   [ -n "$pids" ] && list="$pids"
   for p in $(port_pids $BACK_PORT) $(port_pids $FRONT_PORT); do list="$list $p|0"; done
   [ -z "$list" ] && { echo "nothing to stop"; return 0; }
-  local seen=" " item pid flag
+  local seen=" " item pid flag victims=""
+  # 1a passada: decide tudo antes de matar (matar o lancador apaga a ancestralidade dos filhos)
   for item in $list; do
     pid="${item%%|*}"; flag="${item##*|}"
     case "$seen" in *" $pid "*) continue;; esac
     seen="$seen$pid "
-    if is_ours "$pid" "$flag"; then
-      if [ "$DRY_RUN" = "1" ]; then echo "[dry-run] would stop PID $pid (belongs to llm-monitor)"
-      else taskkill //PID "$pid" //T //F >/dev/null 2>&1 && echo "stopped PID $pid" || echo "PID $pid already gone"; fi
-    else
-      echo "PID $pid does not look like llm-monitor - NOT touching it"
-    fi
+    if is_ours "$pid" "$flag"; then victims="$victims $pid"
+    else echo "PID $pid does not look like llm-monitor - NOT touching it"; fi
+  done
+  # 2a passada: kill por PID, com arvore
+  for pid in $victims; do
+    if [ "$DRY_RUN" = "1" ]; then echo "[dry-run] would stop PID $pid (belongs to llm-monitor)"
+    else taskkill //PID "$pid" //T //F >/dev/null 2>&1 && echo "stopped PID $pid" || echo "PID $pid already gone"; fi
   done
   [ "$DRY_RUN" = "1" ] || rm -f "$PID_FILE"
 }
