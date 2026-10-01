@@ -83,20 +83,32 @@ Rotas: `/llm-monitor/` (painel) e `/llm-monitor/w/<slot>` (widget em foco).
 
 Atalho global para subir, consultar e parar o app de qualquer pasta do Git Bash
 (`llm-monitor`, `llm-monitor status`, `llm-monitor stop`, `llm-monitor help`).
-O script vive em `bin/llm-monitor`; em máquina nova, instale só o wrapper em `~/bin`:
+O script vive em `bin/llm-monitor`; em máquina nova, instale só o wrapper em `~/.bash-bin` (pasta que só o Git Bash enxerga; um `llm-monitor` sem extensão em pasta do PATH do Windows rouba o Win+R):
 
 ```bash
-mkdir -p ~/bin
+mkdir -p ~/.bash-bin
 ```
 ```bash
-printf '#!/usr/bin/env bash\nexec /d/atrium/workspace/guga/llm-monitor/bin/llm-monitor "$@"\n' > ~/bin/llm-monitor
+printf '#!/usr/bin/env bash\nexec /d/atrium/workspace/guga/llm-monitor/bin/llm-monitor "$@"\n' > ~/.bash-bin/llm-monitor
 ```
 ```bash
-chmod +x ~/bin/llm-monitor
+chmod +x ~/.bash-bin/llm-monitor
 ```
 
-Se `~/bin` não estiver no PATH, acrescente ao `~/.bashrc`:
+Acrescente `~/.bash-bin` ao PATH do Git Bash (`~/.bashrc`):
 
 ```bash
-echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+echo 'export PATH="$HOME/.bash-bin:$PATH"' >> ~/.bashrc
 ```
+
+## Windows (Win+R e login)
+
+`Win+R` e `llm-monitor` sobem o app oculto (se preciso) e abrem o navegador; no login do Windows
+ele sobe sozinho, oculto, sem abrir o navegador. Só HKCU, sem admin, idempotente. No PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\atrium\workspace\guga\llm-monitor\bin\install-windows.ps1
+```
+
+Cria a chave `App Paths\llm-monitor.exe` (aponta para `bin\llm-monitor.vbs`) e o atalho
+`LLM Monitor.lnk` em `shell:startup`. Não deixe um arquivo `llm-monitor` em pasta do PATH do Windows.
