@@ -39,7 +39,7 @@ test("1. semana esgota sábado à noite: a frase cita a semana, ◀ na semana", 
   assert.equal(v.state, "attention");
   assert.equal(v.decisive, "7d");
   assert.match(v.headline, /a semana esgota sábado à noite, antes de renovar quarta-feira, 15:00/);
-  assert.match(v.short, /^⚠ semana esgota sáb$/);
+  assert.match(v.short, /^⚠ semana esgota sáb\/noite$/);
   assert.ok(v.short.length <= 40);
   const w5 = v.windows.find((w) => w.id === "5h")!;
   assert.equal(Math.round(w5.ratePctPerHour!), 13);
@@ -84,7 +84,7 @@ test("6. sessão esgota em menos de 1 h: crítico, a sessão decide (menor hitsA
   const v = computeVerdict({ now: NOW, latest: h.at(-1)!, history: h });
   assert.equal(v.state, "critical");
   assert.equal(v.decisive, "5h");
-  assert.match(v.headline, /^Crítico\. Nesse ritmo, a sessão de 5 h esgota hoje às 14:30/);
+  assert.match(v.headline, /^Crítico\. Nesse ritmo, a sessão de 5 h esgota em cerca de 30 min/);
 });
 
 test("7. nenhuma janela esgota: tranquilo, projeção na renovação", () => {
@@ -105,7 +105,13 @@ test("8. ritmo parado: tranquilo com minutos sem consumo", () => {
 
 // ---------------------------------------------------------------- hora humana (6)
 
-test("hora: mesmo dia → hoje às", () => assert.equal(humanTime(L(2026, 10, 1, 19, 20), NOW, "proj"), "hoje às 19:20"));
+test("hora: projeção no mesmo dia → período", () => assert.equal(humanTime(L(2026, 10, 1, 19, 20), NOW, "proj"), "hoje à noite"));
+test("hora: projeção amanhã → período", () => assert.equal(humanTime(L(2026, 10, 2, 9, 12), NOW, "proj"), "amanhã de manhã"));
+test("hora: projeção em < 2 h → duração aproximada", () => {
+  assert.equal(humanTime(NOW + 25 * MIN, NOW, "proj"), "em cerca de 25 min");
+  assert.equal(humanTime(NOW + 90 * MIN, NOW, "proj"), "em cerca de 1 h");
+});
+test("hora: reset no mesmo dia → hoje às (exato)", () => assert.equal(humanTime(L(2026, 10, 1, 19, 20), NOW, "reset"), "hoje às 19:20"));
 test("hora: dia seguinte → amanhã às", () => assert.equal(humanTime(L(2026, 10, 2, 9), NOW, "reset"), "amanhã às 09:00"));
 test("hora: projeção em 2–6 dias → período", () => assert.equal(humanTime(L(2026, 10, 3, 20), NOW, "proj"), "sábado à noite"));
 test("hora: madrugada", () => assert.equal(humanTime(L(2026, 10, 4, 3), NOW, "proj"), "domingo de madrugada"));

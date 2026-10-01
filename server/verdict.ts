@@ -30,20 +30,42 @@ function period(h: number) {
   return h < 6 ? "de madrugada" : h < 12 ? "de manhã" : h < 18 ? "à tarde" : "à noite";
 }
 
+/** Projeção é imprecisa: nunca minuto. Período do dia; faltando < 2 h, duração aproximada. */
+function projTime(t: number, now: number, dd: number): string {
+  const d = new Date(t);
+  const min = Math.round((t - now) / 60000);
+  if (min >= 0 && min < 120) return min < 60 ? `em cerca de ${Math.max(1, min)} min` : "em cerca de 1 h";
+  const per = period(d.getHours());
+  if (dd === 0) return `hoje ${per}`;
+  if (dd === 1) return `amanhã ${per}`;
+  if (dd > 1 && dd < 7) return `${WD_PROJ[d.getDay()]} ${per}`;
+  return `${d.getDate()} de ${MONTH[d.getMonth()]}`;
+}
+
 /** Uma função para toda hora na tela. Projeção é imprecisa → período; reset é exato → hora. */
 export function humanTime(iso: string | number, now: number, kind: "proj" | "reset"): string {
   const t = typeof iso === "number" ? iso : Date.parse(iso);
   const d = new Date(t);
   const dd = dayDiff(t, now);
+  if (kind === "proj") return projTime(t, now, dd);
   if (dd === 0) return `hoje às ${hm(d)}`;
   if (dd === -1) return `ontem às ${hm(d)}`;
   if (dd < -1 && dd > -7) return `${WD_LONG[d.getDay()]}, ${hm(d)}`;
   if (dd === 1) return `amanhã às ${hm(d)}`;
-  if (dd > 0 && dd < 7) return kind === "proj" ? `${WD_PROJ[d.getDay()]} ${period(d.getHours())}` : `${WD_LONG[d.getDay()]}, ${hm(d)}`;
+  if (dd > 0 && dd < 7) return `${WD_LONG[d.getDay()]}, ${hm(d)}`;
   return `${d.getDate()} de ${MONTH[d.getMonth()]}`;
 }
 
 /** Forma curta para a linha de status (≤ 40 caracteres no total). */
+export function shortProj(iso: string | number, now: number): string {
+  const t = typeof iso === "number" ? iso : Date.parse(iso);
+  const min = Math.round((t - now) / 60000);
+  if (min >= 0 && min < 120) return min < 60 ? `em ${Math.max(1, min)} min` : "em ~1 h";
+  const dd = dayDiff(t, now);
+  const p = ["madrugada", "manhã", "tarde", "noite"][new Date(t).getHours() < 6 ? 0 : new Date(t).getHours() < 12 ? 1 : new Date(t).getHours() < 18 ? 2 : 3];
+  return dd <= 0 ? `hoje/${p}` : dd < 7 ? `${WD_ABBR[new Date(t).getDay()]}/${p}` : `${new Date(t).getDate()}/${pad(new Date(t).getMonth() + 1)}`;
+}
+
 export function shortTime(iso: string | number, now: number): string {
   const t = typeof iso === "number" ? iso : Date.parse(iso);
   const d = new Date(t);
@@ -267,7 +289,7 @@ export function computeVerdict(inp: VerdictInput): Verdict {
     const word = critical ? "Crítico" : "Atenção";
     if (d.exhausts) {
       headline = `${word}. Nesse ritmo, ${NAME[d.id]} esgota ${d.hitsHuman}, antes de renovar ${d.resetHuman}.`;
-      short = `⚠ ${SHORTNAME[d.id]} esgota ${shortTime(d.hitsAt!, now)}`;
+      short = `⚠ ${SHORTNAME[d.id]} esgota ${shortProj(d.hitsAt!, now)}`;
     } else {
       const hi = [...cands].sort((a, b) => (b.usedPct ?? 0) - (a.usedPct ?? 0))[0];
       headline = `${word}. ${cap(NAME[hi.id])} está em ${fmt(hi.usedPct!)} %; renova ${hi.resetHuman}.`;
