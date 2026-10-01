@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# llm-monitor — sobe, consulta e para o LLM Monitor (espelha a skill llm-monitor).
+# LLM_MONITOR_DIR so existe para teste; o padrao e fixo.
+APP_DIR="${LLM_MONITOR_DIR:-/d/atrium/workspace/guga/llm-monitor}"
+RUN_DIR="/d/atrium/.tmp/llm-monitor"
+PID_FILE="$RUN_DIR/run.pid"
+FRONT_PORT=4781
+BACK_PORT=4780
+URL="http://127.0.0.1:$FRONT_PORT/llm-monitor/"
+
+http_code() { curl -s -o /dev/null -m 3 -w "%{http_code}" "$URL" 2>/dev/null; }
+
+# PIDs que escutam a porta $1
+port_pids() {
+  netstat -ano 2>/dev/null | tr -d '\r' \
+    | awk -v p=":$1" '$1=="TCP" && $2 ~ p"$" && $4=="LISTENING" {print $5}' | sort -u
+}
+
+cmdline_of() {
+  powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=$1\").CommandLine" 2>/dev/null | tr -d '\r'
+}
+
+# $1=pid $2=1 se e o PID do run.pid (aceita o node de scripts/dev.mjs)
+is_ours() {
+  local cl; cl="$(cmdline_of "$1")"
+  [ -z "$cl" ] && return 1
+  if echo "$cl" | grep -qi 'llm-monitor'; then return 0; fi
+  if [ "$2" = "1" ] && echo "$cl" | grep -qiE 'scripts[\/]dev\.mjs'; then return 0; fi
+  return 1
+}
+
+open_browser() { cmd.exe /c start "" "$URL" >/dev/null 2>&1 || explorer.exe "$URL" >/dev/null 2>&1; }
+
+print_pids() {
+  echo "PIDs: backend($BACK_PORT)=$(port_pids $BACK_PORT | tr '\n' ' ') front($FRONT_PORT)=$(port_pids $FRONT_PORT | tr '\n' ' ')"
+}
+
+cmd_help() {
+  cat <<H
+llm-monitor - launch and manage the LLM Monitor
+
+Usage:
+  llm-monitor          start the app (if not running) and open it in the browser
+  llm-monitor status   tell whether it is up and who owns ports $BACK_PORT/$FRONT_PORT
+  llm-monitor stop     stop it (only processes that belong to llm-monitor)
+  llm-monitor help     this text
+
+Address: $URL
+H
+}
+
+cmd_status() {
+  local c; c="$(http_code)"
+  if [ "$c" = "200" ]; then echo "llm-monitor: UP at $URL"; else echo "llm-monitor: DOWN (http $c)"; fi
+  print_pids
+  [ -f "$PID_FILE" ] && echo "run.pid: $(cat "$PID_FILE")"
+  [ "$c" = "200" ]
+}
+
+cmd_stop() {
+  local pids="" p
+  [ -f "$PID_FILE" ] && pids="$(cat "$PID_FILE" | tr -d '\r\n ')|1"
+  local list=""
+  [ -n "$pids" ] && list="$pids"
+  for p in $(port_pids $BACK_PORT) $(port_pids $FRONT_PORT); do list="$list $p|0"; done
+  [ -z "$list" ] && { echo "nothing to stop"; return 0; }
+  local seen=" " item pid flag
+  for item in $list; do
+    pid="${item%%|*}"; flag="${item##*|}"
+    case "$seen" in *" $pid "*) continue;; esac
+    seen="$seen$pid "
+    if is_ours "$pid" "$flag"; then
+      if [ "$DRY_RUN" = "1" ]; then echo "[dry-run] would stop PID $pid (belongs to llm-monitor)"
+      else taskkill //PID "$pid" //T //F >/dev/null 2>&1 && echo "stopped PID $pid" || echo "PID $pid already gone"; fi
+    else
+      echo "PID $pid does not look like llm-monitor - NOT touching it"
+    fi
+  done
+  [ "$DRY_RUN" = "1" ] || rm -f "$PID_FILE"
+}
+
+cmd_start() {
+  if [ ! -f "$APP_DIR/package.json" ]; then
+    cat <<R
+llm-monitor is not installed on this machine ($APP_DIR).
+
+Prerequisites: clone the atrium (workspace/atrium) and commons (workspace/commons) repos
+first (file: dependencies), and add a statusLine entry to ~/.claude/settings.json:
+  node D:/atrium/workspace/guga/llm-monitor/statusline.mjs
+
+Then, one command at a time (Git Bash):
+  gh auth status
+  git clone git@github.com:gugacoder/llm-monitor.git /d/atrium/workspace/guga/llm-monitor
+  cd /d/atrium/workspace/guga/llm-monitor
+  npm install
+R
+    return 1
+  fi
+  if [ ! -d "$APP_DIR/node_modules" ]; then
+    echo "installing dependencies..."
+    (cd "$APP_DIR" && npm install) || { echo "npm install failed"; return 1; }
+  fi
+  if [ "$(http_code)" = "200" ]; then
+    echo "llm-monitor already running: $URL"
+    print_pids
+    open_browser
+    return 0
+  fi
+  if [ -n "$(port_pids $BACK_PORT)$(port_pids $FRONT_PORT)" ]; then
+    echo "ports $BACK_PORT/$FRONT_PORT are in use but not answering as llm-monitor."
+    print_pids
+    echo "Not killing anything. Check with: llm-monitor status"
+    return 1
+  fi
+  mkdir -p "$RUN_DIR"
+  local winpath; winpath="$(cygpath -w "$APP_DIR")"
+  local pid
+  pid="$(powershell.exe -NoProfile -Command "\$p = Start-Process -FilePath node -ArgumentList 'scripts/dev.mjs' -WorkingDirectory '$winpath' -WindowStyle Hidden -PassThru; \$p.Id" | tr -d '\r\n ')"
+  [ -z "$pid" ] && { echo "failed to launch"; return 1; }
+  echo "$pid" > "$PID_FILE"
+  echo "launching (PID $pid), waiting for $URL ..."
+  local i
+  for i in $(seq 1 60); do
+    [ "$(http_code)" = "200" ] && break
+    sleep 1
+  done
+  if [ "$(http_code)" = "200" ]; then
+    echo "llm-monitor up: $URL (launcher PID $pid)"
+    print_pids
+    open_browser
+  else
+    echo "timeout: not answering after 60s (launcher PID $pid)"; return 1
+  fi
+}
+
+case "${1:-}" in
+  "")      cmd_start ;;
+  status)  cmd_status ;;
+  stop)    cmd_stop ;;
+  help|-h|--help) cmd_help ;;
+  __check) is_ours "$2" "${3:-0}" && echo "PID $2: ours (would stop)" || echo "PID $2: NOT ours (would refuse)" ;;
+  *) echo "unknown command: $1"; cmd_help; exit 2 ;;
+esac

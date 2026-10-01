@@ -78,3 +78,25 @@ o slot muda, com entrada animada e selo "versão n". Cada slot tem ErrorBoundary
 o painel "Versões" (`#versoes/<widget>`) desfaz a última troca ou põe no ar uma guardada.
 
 Rotas: `/llm-monitor/` (painel) e `/llm-monitor/w/<slot>` (widget em foco).
+
+## Comando llm-monitor
+
+Atalho global para subir, consultar e parar o app de qualquer pasta do Git Bash
+(`llm-monitor`, `llm-monitor status`, `llm-monitor stop`, `llm-monitor help`).
+O script vive em `bin/llm-monitor`; em máquina nova, instale só o wrapper em `~/bin`:
+
+```bash
+mkdir -p ~/bin
+```
+```bash
+printf '#!/usr/bin/env bash\nexec /d/atrium/workspace/guga/llm-monitor/bin/llm-monitor "$@"\n' > ~/bin/llm-monitor
+```
+```bash
+chmod +x ~/bin/llm-monitor
+```
+
+Se `~/bin` não estiver no PATH, acrescente ao `~/.bashrc`:
+
+```bash
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+```
