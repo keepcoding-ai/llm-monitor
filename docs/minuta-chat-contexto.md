@@ -1,3 +1,5 @@
+**APROVADA pelo dono em 01/10/2026 — em uso em server/llm.ts**
+
 # MINUTA — contexto da tela no chat (não ligada)
 
 Plano de interface §6: "Contexto da tela entra silenciosamente (veredito e janela decisiva; em Semana, o recorte; em Reserva, a conta)".

@@ -271,11 +271,10 @@ api.post("/proposals/:file/apply-widget", async (c) => {
 
 api.get("/chat", (c) => c.json(chatHistory()));
 api.post("/chat", async (c) => {
-  // `context` (tela atual) chega do cliente mas ainda não entra no prompt: mudança de
-  // texto lido pelo LLM é minuta (docs/minuta-chat-contexto.md) até o dono aprovar.
-  const { message } = (await c.req.json()) as { message: string; context?: string };
+  // `context` (tela atual) entra no system do chat (texto aprovado em docs/minuta-chat-contexto.md).
+  const { message, context } = (await c.req.json()) as { message: string; context?: string };
   if (!message?.trim()) return c.json({ error: "mensagem vazia" }, 400);
-  chat(message.trim()).catch((e) => publish("chat", { type: "error", error: (e as Error).message }));
+  chat(message.trim(), context).catch((e) => publish("chat", { type: "error", error: (e as Error).message }));
   return c.json({ accepted: true }, 202);
 });
 api.post("/chat/stop", (c) => c.json({ stopped: stopChatRun() }));

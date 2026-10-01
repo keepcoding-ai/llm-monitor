@@ -97,7 +97,7 @@ export function compactSummary(s: Snapshot) {
     subagentesHoje: { parcela: r(s.sidechainToday.share), opusEmSubagentes: r(s.sidechainToday.opusShare) },
     ultimas12h: s.hourly.slice(-12).map((h) => r(h.cost)),
     limites: s.limits,
-    autonomia: s.autonomy,
+    veredito: { estado: s.verdict.state, frase: s.verdict.headline, janelas: s.verdict.windows.map((w) => ({ janela: w.label, usado: w.usedPct, renova: w.resetHuman, esgota: w.exhausts ? w.hitsHuman : null })) },
     janelaAtual: s.windows.find((w) => w.active) ?? null,
     contasSoul: s.soul.map((p) => ({ pool: p.label, ok: p.ok, erro: p.error, contas: p.accounts.map((a) => ({ nome: a.label, ativa: a.isActive, estado: a.state, resetaEm: a.resetsAt })) })),
     marcas: s.flags.filter((f) => !f.ack).slice(0, 12).map((f) => ({ tipo: f.kind, nivel: f.level, titulo: f.title })),
@@ -220,7 +220,7 @@ export function chatHistory(): ChatMsg[] {
   return readJsonl<ChatMsg>(P.chat).slice(-200);
 }
 
-export async function chat(message: string): Promise<void> {
+export async function chat(message: string, context?: string): Promise<void> {
   if (chatBusy) throw new Error("o chat ainda está respondendo");
   const blocked = budgetGuard();
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: "user", text: message, at: new Date().toISOString() };
@@ -243,6 +243,7 @@ export async function chat(message: string): Promise<void> {
     `Código do app: ${APP_ROOT}. Widgets ficam em widgets/<id>/v<n>.tsx; para propor um widget novo, mostre o código completo.`,
     "Resumo atual:",
     JSON.stringify(compactSummary(buildSnapshot())),
+    ...(context?.trim() ? [`Contexto da tela que o dono está vendo agora (use para entender a pergunta; não repita): ${context.trim()}`] : []),
   ].join("\n");
   const args = ["--model", cfg.chatModel, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Read,Grep,Glob", "--add-dir", APP_ROOT, "--append-system-prompt", system];
   if (sess.sessionId) args.push("--resume", sess.sessionId);
