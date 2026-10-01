@@ -72,7 +72,7 @@ function typecheck(file: string): Promise<{ ok: boolean; output: string }> {
   const cfgDir = join(APP_ROOT, "..", "..", "..", ".tmp", "llm-monitor", "tsc");
   mkdirSync(cfgDir, { recursive: true });
   const cfg = join(cfgDir, `tsconfig.widget-${Date.now()}.json`);
-  writeFileSync(cfg, JSON.stringify({ extends: join(APP_ROOT, "tsconfig.json"), compilerOptions: { noEmit: true }, files: [file, join(APP_ROOT, "src", "env.d.ts")], include: [] }));
+  writeFileSync(cfg, JSON.stringify({ extends: join(APP_ROOT, "tsconfig.json"), compilerOptions: { noEmit: true, typeRoots: [join(APP_ROOT, "node_modules", "@types"), join(APP_ROOT, "node_modules")] }, files: [file, join(APP_ROOT, "src", "env.d.ts")], include: [] }));
   return new Promise((resolve) => {
     const tsc = join(APP_ROOT, "node_modules", "typescript", "bin", "tsc");
     const child = spawn(process.execPath, [tsc, "-p", cfg], { cwd: APP_ROOT, windowsHide: true });
@@ -80,9 +80,11 @@ function typecheck(file: string): Promise<{ ok: boolean; output: string }> {
     child.stdout.on("data", (d) => (out += d));
     child.stderr.on("data", (d) => (out += d));
     child.on("close", (code) => {
-      // só os erros do próprio widget contam; avisos de pacotes de terceiros não bloqueiam
+      // O tsconfig temporário mora fora do app; sem typeRoots explícito (acima) o tsc
+      // não achava node/vite-client, abortava antes da checagem semântica e o filtro
+      // "só erros do widget" aprovava tudo. Agora tsc falhou = reprovado, sempre.
       const own = out.split("\n").filter((l) => l.includes(`widgets`) && l.includes("error TS"));
-      resolve({ ok: code === 0 || own.length === 0, output: own.join("\n") || (code === 0 ? "" : out.slice(0, 2000)) });
+      resolve({ ok: code === 0, output: own.join("\n") || (code === 0 ? "" : out.slice(0, 2000)) });
     });
   });
 }

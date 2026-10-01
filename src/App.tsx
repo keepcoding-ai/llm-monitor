@@ -10,7 +10,8 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
   ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Skeleton, Spinner, StatusDot, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider,
 } from "@atrium/core-ui";
-import { ArrowLeft, ArrowsOut, ClockCounterClockwise, Heartbeat, StackSimple } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowsOut, ClockCounterClockwise, Heartbeat, House, StackSimple } from "@phosphor-icons/react";
+import { ThemeRoot, ThemeToggle } from "./theme";
 import { BASE, ago, call, connect, useLayout, useLive, useSnapshot } from "./sdk";
 import { SlotBoundary, TestHarness, useWidget } from "./runtime";
 import type { SlotSpec, WidgetVersion } from "../shared/snapshot";
@@ -287,12 +288,30 @@ function LiveStatus() {
   );
 }
 
-function Rail({ slots }: { slots: SlotSpec[] }) {
+/** Nome do app — sempre leva ao painel (página inicial). */
+function HomeMark({ className = "" }: { className?: string }) {
+  return (
+    <a
+      href={`${BASE}/`}
+      onClick={(e) => {
+        e.preventDefault();
+        navigate(`${BASE}/`);
+      }}
+      className={`inline-flex min-h-11 items-center rounded-md text-lg font-semibold tracking-tight outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring md:min-h-0 ${className}`}
+      aria-label="LLM Monitor — ir para o painel"
+    >
+      <h1>LLM Monitor</h1>
+    </a>
+  );
+}
+
+function Rail({ slots, focus }: { slots: SlotSpec[]; focus: string | null }) {
   const snap = useSnapshot();
+  const item = (active: boolean) => `flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted ${active ? "bg-muted font-medium text-foreground" : ""}`;
   return (
     <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col gap-6 border-r px-4 py-6 xl:flex tv:w-72">
       <div>
-        <h1 className="text-lg font-semibold tracking-tight tv:text-xl">LLM Monitor</h1>
+        <HomeMark className="tv:text-xl" />
         <LiveStatus />
       </div>
       {snap?.account && (
@@ -302,14 +321,19 @@ function Rail({ slots }: { slots: SlotSpec[] }) {
           <div className="truncate text-muted-foreground">{snap.account.email}</div>
         </div>
       )}
-      <nav className="flex flex-col gap-0.5">
+      <nav className="flex flex-col gap-0.5" aria-label="Navegação">
+        <button className={item(!focus)} aria-current={!focus ? "page" : undefined} onClick={() => navigate(`${BASE}/`)}>
+          <House className="size-4" /> Painel
+        </button>
+        <div className="my-1 border-t" />
         {slots.map((s) => (
-          <button key={s.id} className="rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => navigate(`${BASE}/w/${s.id}`)}>
+          <button key={s.id} className={item(focus === s.id)} aria-current={focus === s.id ? "page" : undefined} onClick={() => navigate(`${BASE}/w/${s.id}`)}>
             {s.title}
           </button>
         ))}
       </nav>
       <div className="mt-auto flex flex-col gap-2">
+        <ThemeToggle className="self-start" />
         <PulseButton full />
         {snap && <span className="text-xs text-muted-foreground">{snap.pulse.lastAt ? `Último pulso ${ago(snap.pulse.lastAt)}` : "Nenhum pulso ainda"}</span>}
       </div>
@@ -332,16 +356,20 @@ export function App() {
 
   return (
     <TooltipProvider>
+      <ThemeRoot />
       <div className="flex min-h-dvh">
-        <Rail slots={slots} />
+        <Rail slots={slots} focus={focusSlot ? focus : null} />
         <main className="min-w-0 flex-1 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] md:px-6 xl:px-8 xl:py-8 tv:px-12">
           {/* cabeçalho no fluxo (mobile/tablet) — some quando o trilho aparece */}
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3 xl:hidden">
-            <div>
-              <h1 className="text-lg font-semibold tracking-tight">LLM Monitor</h1>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 xl:hidden">
+            <div className="min-w-0">
+              <HomeMark />
               <LiveStatus />
             </div>
-            <PulseButton />
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <PulseButton />
+            </div>
           </div>
 
           {collectorError && (
@@ -374,7 +402,7 @@ export function App() {
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 24 }}
                   transition={{ duration: 0.3, ease: "easeInOut" }}
-                  className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 tv:grid-cols-4 tv:gap-6"
+                  className="grid grid-cols-1 gap-4 md:grid-flow-row-dense md:grid-cols-2 xl:grid-cols-3 tv:grid-cols-4 tv:gap-6"
                 >
                   {slots.map((s) => (
                     <Slot key={s.id} spec={s} />

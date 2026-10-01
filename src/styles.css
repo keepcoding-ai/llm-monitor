@@ -65,8 +65,9 @@
   --x-muted-foreground: oklch(0.99 0 0);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Escuro por classe: src/theme.tsx (e o script inline do index.html) marca .dark
+ * no <html> conforme claro / automático (segue o sistema) / escuro. */
+:root.dark {
     color-scheme: dark;
     --background: oklch(0.17 0.022 222);
     --foreground: oklch(0.92 0.012 222);
@@ -91,7 +92,6 @@
     --x-faint: oklch(0.5 0.014 230);
     --x-muted: oklch(0.62 0.02 230);
   }
-}
 
 @theme inline {
   --color-x-red: var(--x-red);
@@ -139,3 +139,11 @@ body {
 }
 * { border-color: var(--border); }
 .tabular { font-variant-numeric: tabular-nums; }
+
+/* Item escolhido de ToggleGroup (tema, modelo, esforço, período): o padrão do kit pinta
+ * com --muted, que no escuro fica a 0,03 de luminância do card e some. Seleção é
+ * intenção → --accent nos dois temas. */
+[data-slot="toggle-group-item"][data-state="on"] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}

@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>LLM Monitor</title>
+    <!-- Tema antes do React (sem flash). Mesma chave e regra de src/theme.tsx. -->
+    <script>
+      (function () {
+        var m = "auto";
+        try { var v = JSON.parse(localStorage.getItem("pos:state:anon:standalone:theme-mode")); if (v === "light" || v === "dark" || v === "auto") m = v; } catch (e) {}
+        var d = m === "dark" || (m === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
+        if (d) document.documentElement.classList.add("dark");
+        document.documentElement.style.colorScheme = d ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
