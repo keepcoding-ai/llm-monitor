@@ -6,7 +6,10 @@ import { listFlags, raiseFlag, clearFlag } from "./flags.ts";
 import { meta, activeClaudeAccount } from "./collector/claude.ts";
 import { soulPools, soulVocabulary } from "./collector/soul.ts";
 import { readClaudeSettings } from "./control.ts";
-import type { Autonomy, Bucket, Limits, LimitWindow, Named, PulseRecord, Snapshot, Suggestion } from "../shared/snapshot.ts";
+import { buildCabe, checkEstimates, fiveHourWindows } from "./cabe.ts";
+import type { Cabe } from "../shared/cabe.ts";
+import { computeVerdict, divergentSessions, type FableManual, type Reading } from "./verdict.ts";
+import type { Verdict, Autonomy, Bucket, Limits, LimitWindow, Named, PulseRecord, Snapshot, Suggestion } from "../shared/snapshot.ts";
 
 const H = 3600_000;
 const D = 24 * H;
@@ -72,7 +75,7 @@ function readLimits(): Limits {
   const fiveHour = windowOf(s.rateLimits?.five_hour);
   const sevenDay = windowOf(s.rateLimits?.seven_day);
   if (!fiveHour && !sevenDay) {
-    raiseFlag({ key: "statusline-no-limits", kind: "fonte-incompleta", level: "warning", title: "A statusline chega, mas sem limites", detail: `O Claude Code não enviou rate_limits nesta versão/conta. Campos recebidos: ${s.keys.join(", ")}.` });
+    raiseFlag({ key: "statusline-no-limits", kind: "fonte-incompleta", level: "warning", title: "A linha de status chega, mas sem os limites do plano", detail: `O Claude Code não enviou o % da sessão de 5 h nem da semana nesta versão ou conta (${s.keys.length} campos recebidos). Sem eles, o veredito fica só na tendência.` });
     return { state: "missing", reason: "A statusline está ativa, mas o Claude Code não enviou os limites de 5 h/semana nesta versão ou conta." };
   }
   clearFlag("statusline-no-limits");
@@ -118,6 +121,81 @@ function autonomy(limits: Limits, recent: UsageRecord[], now: number): Autonomy 
     tokensPerHourAvg: avg,
     verdict: avg === 0 ? "Sem consumo na última semana." : ratio > 1.5 ? `Ritmo da última hora ${ratio.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}× acima da sua média por hora ativa.` : ratio < 0.5 ? "Ritmo da última hora abaixo da sua média." : "Ritmo da última hora dentro da sua média.",
     reason: "Sem os limites da statusline não há como dizer quando o plano bate o teto — só a tendência de tokens (sem cache lido).",
+  };
+}
+
+// ------------------------------------------------------------ veredito (plano §3)
+
+function toWin(x: any) {
+  return windowOf(x);
+}
+export function readFableManual(): FableManual | null {
+  return readJson<FableManual | null>(P.fableManual, null);
+}
+export function readHistory(now: number): Reading[] {
+  return readJsonl<Reading>(P.statuslineHistory).filter((h) => now - Date.parse(h.at) <= 8 * D);
+}
+export function buildVerdict(now: number, lastUsageAt: number | null, history: Reading[] = readHistory(now)): Verdict {
+  let latest: Reading | null = null;
+  if (existsSync(P.statusline)) {
+    const s = readJson<StatuslineSnap & { session?: string }>(P.statusline, { at: "", keys: [], rateLimits: null });
+    if (s.at) latest = { at: s.at, session: s.session ?? null, five: toWin(s.rateLimits?.five_hour), seven: toWin(s.rateLimits?.seven_day) };
+  }
+  const weekStart = latest?.seven?.resetsAt ? Date.parse(latest.seven.resetsAt) - 7 * D : now - 7 * D;
+  const fable = since(weekStart).filter((r) => r.source === "claude-code" && family(r.model) === "fable");
+  const fableUsage = fable.length ? { tokens: fable.reduce((x, r) => x + r.input + r.output + r.cacheWrite + r.cacheRead, 0), cost: fable.reduce((x, r) => x + (r.cost ?? 0), 0), since: new Date(weekStart).toISOString() } : null;
+  const div = divergentSessions(history, now);
+  if (div) raiseFlag({ key: "sessoes-divergentes", kind: "dado-divergente", level: "warning", title: "Duas sessões informam limites diferentes — o veredito segue a mais recente", detail: `Na ${div.window === "7d" ? "semana" : "sessão de 5 h"}, uma sessão do Claude Code informa ${Math.round(div.a)} % e outra ${Math.round(div.b)} %. Provavelmente são contas diferentes abertas ao mesmo tempo; o veredito segue a leitura mais recente.` });
+  return computeVerdict({ now, latest, history, fableManual: readFableManual(), fableUsage, lastUsageAt });
+}
+
+// ------------------------------------------------------------ semana (plano G5)
+
+function buildSemana(v: Verdict, history: Reading[], cc28: UsageRecord[], cabe: Cabe, now: number): Snapshot["semana"] {
+  const w7 = v.windows.find((w) => w.id === "7d");
+  const resetsAt = w7?.resetsAt ?? null;
+  const weekStart = resetsAt ? Date.parse(resetsAt) - 7 * D : null;
+  const latestSession = v.sessionTail ? history.filter((h) => h.session?.endsWith(v.sessionTail!)).at(-1)?.session ?? null : null;
+  // série oficial da semana: mesma renovação; sessão atual (ou leituras antigas sem sessão); por hora; nunca desce
+  const byHour = new Map<number, number>();
+  for (const h of history) {
+    if (!h.seven || h.seven.resetsAt !== resetsAt) continue;
+    if (h.session && latestSession && h.session !== latestSession) continue;
+    byHour.set(Math.floor(Date.parse(h.at) / H) * H, h.seven.usedPct);
+  }
+  let run = 0;
+  const points = [...byHour].sort((a, b) => a[0] - b[0]).map(([t, pct]) => ({ t: new Date(t).toISOString(), pct: (run = Math.max(run, pct)) }));
+  if (weekStart != null && (!points.length || Date.parse(points[0].t) > weekStart)) points.unshift({ t: new Date(weekStart).toISOString(), pct: 0 });
+  const used = w7?.usedPct ?? null;
+  const daysLeft = resetsAt ? (Date.parse(resetsAt) - now) / D : null;
+  const needPerDay = used != null && daysLeft && daysLeft > 0 ? (100 - used) / daysLeft : null;
+  const day0 = startOfDay(now);
+  // "hoje" só com uma leitura oficial real antes da meia-noite (o 0 % do início da semana não conta, salvo se a semana começou hoje)
+  const before = [...points].reverse().find((p) => Date.parse(p.t) <= day0 && (byHour.has(Date.parse(p.t)) || Date.parse(p.t) === weekStart));
+  const atDayStart = before && (byHour.has(Date.parse(before.t)) || (weekStart != null && weekStart >= day0)) ? before.pct : weekStart != null && weekStart >= day0 ? 0 : null;
+  const todayPct = used != null && atDayStart != null ? used - atDayStart : null;
+  const own = cc28.filter((r) => !r.platform);
+  const wk = weekStart != null ? own.filter((r) => r.ts >= weekStart) : [];
+  const cost = wk.reduce((x, r) => x + (r.cost ?? 0), 0);
+  const lastWeek = weekStart != null && own.length && own[0].ts <= weekStart - 7 * D ? own.filter((r) => r.ts >= weekStart - 7 * D && r.ts < weekStart).reduce((x, r) => x + (r.cost ?? 0), 0) : null;
+  const share = (rows: Named[]) => rows.map((n) => ({ key: n.key, cost: n.cost, share: cost ? n.cost / cost : 0 }));
+  const side = wk.filter((r) => r.side).reduce((x, r) => x + (r.cost ?? 0), 0);
+  const slackBelow = cabe.generic ? null : cabe.presets.find((p) => p.id === "leve")?.usd ?? null;
+  const wins = weekStart != null ? fiveHourWindows(wk).map((w) => ({ start: new Date(w.start).toISOString(), end: new Date(w.end).toISOString(), cost: w.cost, active: now < w.end, slack: slackBelow != null && now >= w.end && w.cost < slackBelow })) : [];
+  return {
+    weekStart: weekStart != null ? new Date(weekStart).toISOString() : null,
+    resetsAt,
+    points,
+    usedPct: used,
+    needPerDay,
+    todayPct,
+    cost,
+    lastWeekCost: lastWeek,
+    byFamily: share(group(wk, (r) => family(r.model), 6)),
+    sideShare: cost ? side / cost : 0,
+    byProject: share(group(wk, (r) => r.project, 4)),
+    windows: wins,
+    slackBelow,
   };
 }
 
@@ -213,6 +291,13 @@ export function buildSnapshot(): Snapshot {
   const wins = windows(ccAll, now);
   const limits = readLimits();
   const auto = autonomy(limits, r7, now);
+  const lastCC = [...r7].reverse().find((r) => r.source === "claude-code" && !r.platform);
+  const history = readHistory(now);
+  const verdict = buildVerdict(now, lastCC?.ts ?? null, history);
+  const cc28 = r28.filter((r) => r.source === "claude-code");
+  const cabe = buildCabe(cc28, history, now);
+  checkEstimates(cc28, history, now);
+  const semana = buildSemana(verdict, history, cc28, cabe, now);
 
   rateJumpRule(r7, now);
 
@@ -242,12 +327,17 @@ export function buildSnapshot(): Snapshot {
     byModel,
     byModelWeek: group(r7, (r) => r.model),
     byProject: group(r7, (r) => r.project, 10),
+    byProjectToday: group(rToday.filter((r) => r.source === "claude-code"), (r) => r.project, 5),
     byAccount: group(r7, (r) => `${r.source === "soul" ? "Soul" : "Claude Code"} · ${r.account}`, 10),
     sidechainToday: { cost: sideCost, share: today.cost ? sideCost / today.cost : 0, opusShare: today.cost ? sideOpus / today.cost : 0 },
     heatmap: heat,
     windows: wins,
     limits,
     autonomy: auto,
+    verdict,
+    cabe,
+    semana,
+    tempDefault: readJson<Snapshot["tempDefault"]>(P.tempDefault, null),
     platform: { todayCost: platformCost, budget: cfg.platformDailyBudgetUSD, calls: Math.max(new Set(platformToday.map((r) => r.session)).size, loggedSpend.length) },
     flags: listFlags(),
     suggestions: [],

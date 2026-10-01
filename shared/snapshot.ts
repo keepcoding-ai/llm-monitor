@@ -15,6 +15,28 @@ export type Autonomy =
   | { basis: "limits"; window: "5h" | "7d"; usedPct: number; ratePctPerHour: number; hitsAt: string | null; resetsAt: string | null; verdict: string }
   | { basis: "trend"; tokensPerHourNow: number; tokensPerHourAvg: number; verdict: string; reason: string };
 
+export type VerdictState = "ok" | "attention" | "critical" | "exhausted" | "missing" | "stale";
+export type VerdictWindow = {
+  id: "5h" | "7d" | "fable-7d"; label: string; usedPct: number | null; resetsAt: string | null;
+  resetHuman: string; ratePctPerHour: number | null; rateAvgPctPerHour?: number | null; rateRecentPctPerHour?: number | null;
+  hitsAt: string | null; hitsHuman: string | null; exhausts: boolean; projAtReset: number | null;
+  source: "statusline" | "manual" | "none"; note?: string;
+  /** Fable: uso real da semana (tokens/US$ equivalente) e quando o % foi informado à mão */
+  fableTokens?: number; fableCost?: number; fableSince?: string; fableSinceHuman?: string; manualAt?: string;
+};
+export type Verdict = {
+  state: VerdictState;
+  /** estado do dado por baixo do selo "leitura antiga" */
+  underlying?: VerdictState;
+  headline: string;
+  /** ≤ 40 caracteres, para a linha de status do terminal */
+  short: string;
+  decisive: VerdictWindow["id"] | null;
+  windows: VerdictWindow[];
+  readAt: string | null;
+  sessionTail: string | null;
+};
+
 export type FlagView = { key: string; kind: string; level: "info" | "warning" | "alert" | "error"; title: string; detail: string; firstSeen: string; lastSeen: string; count: number; ack?: boolean };
 
 export type Suggestion = { id: string; origin: "regra" | "pulso"; level: "info" | "notice" | "warning" | "alert"; title: string; detail: string; at: string };
@@ -36,12 +58,33 @@ export type Snapshot = {
   byModel: Named[];
   byModelWeek: Named[];
   byProject: Named[];
+  byProjectToday: Named[];
   byAccount: Named[];
   sidechainToday: { cost: number; share: number; opusShare: number };
   heatmap: number[][]; // [dia-da-semana 0=dom][hora] custo médio (28 dias)
   windows: { start: string; end: string; cost: number; total: number; active: boolean }[];
   limits: Limits;
   autonomy: Autonomy;
+  verdict: Verdict;
+  cabe: import("./cabe.ts").Cabe;
+  /** troca temporária do modelo padrão ("até a renovação"), desfeita sozinha em `until` */
+  semana: {
+    weekStart: string | null;
+    resetsAt: string | null;
+    /** % oficial da semana, um ponto por hora (última leitura da hora) */
+    points: { t: string; pct: number }[];
+    usedPct: number | null;
+    needPerDay: number | null;
+    todayPct: number | null;
+    cost: number;
+    lastWeekCost: number | null;
+    byFamily: { key: string; cost: number; share: number }[];
+    sideShare: number;
+    byProject: { key: string; cost: number; share: number }[];
+    windows: { start: string; end: string; cost: number; active: boolean; slack: boolean }[];
+    slackBelow: number | null;
+  };
+  tempDefault: { model: string; previous: string | null; until: string; at: string } | null;
   platform: { todayCost: number; budget: number; calls: number };
   flags: FlagView[];
   suggestions: Suggestion[];
@@ -61,5 +104,6 @@ export type PulseRecord = {
 };
 
 export type WidgetVersion = { v: number; status: "active" | "testing" | "failed" | "retired" | "checking"; at: string; note: string; error?: string };
-export type SlotSpec = { id: string; widget: string; version: number; span: { md: number; xl: number; tv: number }; title: string };
-export type Layout = { slots: SlotSpec[]; versions: Record<string, WidgetVersion[]>; history: Record<string, number[]> };
+export type PageId = "agora" | "semana" | "reserva" | "avisos";
+export type SlotSpec = { id: string; widget: string; version: number; span: { md: number; xl: number; tv: number }; title: string; page: PageId; order: number };
+export type Layout = { rev?: number; slots: SlotSpec[]; versions: Record<string, WidgetVersion[]>; history: Record<string, number[]> };

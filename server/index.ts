@@ -2,9 +2,9 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { P, loadConfig, seedState, writeJson, readJson, type Config, type ModelsCatalog } from "./store.ts";
+import { APP_ROOT, P, appendJsonl, loadConfig, seedState, writeJson, readJson, readJsonl, type Config, type ModelsCatalog } from "./store.ts";
 import { loadSeries, records } from "./series.ts";
 import { collectClaude, meta } from "./collector/claude.ts";
 import { collectSoul, activateSoulAccount } from "./collector/soul.ts";
@@ -12,8 +12,8 @@ import { saveOffsets } from "./collector/incremental.ts";
 import { buildSnapshot, setPulseState, statuslineMtime } from "./derive.ts";
 import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
-import { writeClaudeDefaults, settingsPath } from "./control.ts";
-import { chat, chatHistory, listProposals, pulse, resetChat, escalate } from "./llm.ts";
+import { writeClaudeDefaults, settingsPath, readClaudeSettings } from "./control.ts";
+import { chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun } from "./llm.ts";
 import { loadLayout, pendingTestList, proposeWidget, reportTest, restoreWidget, undoWidget } from "./widgets.ts";
 import type { Snapshot } from "../shared/snapshot.ts";
 
@@ -35,6 +35,7 @@ async function cycle() {
   try {
     const a = await collectClaude((n) => publish("progress", { files: n, records: records.length }));
     const b = await collectSoul();
+    revertTempDefault();
     saveOffsets();
     collectorError = null;
     snapshot = buildSnapshot();
@@ -153,6 +154,43 @@ api.post("/control/claude", async (c) => {
   }
 });
 
+// Alavanca do "Por quê hoje": troca o modelo padrão até a renovação da semana e
+// volta sozinha (o clique do dono autoriza a ida e a volta). Desfazer devolve na hora.
+api.post("/control/claude/temporary", async (c) => {
+  const { model, until } = (await c.req.json()) as { model: string; until: string };
+  if (!model || !until || !Number.isFinite(Date.parse(until))) return c.json({ ok: false, error: "modelo ou prazo inválido" }, 400);
+  try {
+    const previous = (readClaudeSettings().model as string | undefined) ?? null;
+    const r = writeClaudeDefaults({ model });
+    writeJson(P.tempDefault, { model, previous, until, at: new Date().toISOString() });
+    snapshot = buildSnapshot();
+    publish("snapshot", snapshot);
+    return c.json({ ok: true, previous, backup: r.backup });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 400);
+  }
+});
+api.post("/control/claude/temporary/undo", (c) => {
+  const t = readJson<{ previous: string | null } | null>(P.tempDefault, null);
+  if (!t) return c.json({ ok: false, error: "não há troca temporária para desfazer" }, 400);
+  try {
+    writeClaudeDefaults({ model: t.previous });
+    rmSync(P.tempDefault, { force: true });
+    snapshot = buildSnapshot();
+    publish("snapshot", snapshot);
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ ok: false, error: (e as Error).message }, 400);
+  }
+});
+function revertTempDefault() {
+  const t = readJson<{ previous: string | null; until: string } | null>(P.tempDefault, null);
+  if (!t || Date.now() < Date.parse(t.until)) return;
+  writeClaudeDefaults({ model: t.previous });
+  rmSync(P.tempDefault, { force: true });
+  console.log(`[controle] modelo padrão voltou para ${t.previous ?? "o padrão do plano"} (fim da troca temporária)`);
+}
+
 // controle: conta ativa do Soul (via provider-pool)
 api.post("/control/soul/activate", async (c) => {
   const { dir, accountId } = (await c.req.json()) as { dir: string; accountId: string };
@@ -197,6 +235,30 @@ api.post("/pulse/escalate", async (c) => {
   return c.json(r);
 });
 
+// Cabe?: registra a estimativa para conferir depois de uma janela (previsão vs real)
+api.post("/cabe/estimate", async (c) => {
+  const { preset, usd } = (await c.req.json()) as { preset: string; usd: number };
+  if (!snapshot || !Number.isFinite(usd)) return c.json({ error: "sem dados para estimar" }, 409);
+  const w7 = snapshot.verdict.windows.find((w) => w.id === "7d");
+  const sl = readJson<{ session?: string }>(P.statusline, {});
+  appendJsonl(P.cabeEstimates, [{ at: new Date().toISOString(), preset, usd, usdPerPctWeek: snapshot.cabe.usdPerPctWeek, session: sl.session ?? null, weekResetsAt: w7?.resetsAt ?? null }]);
+  return c.json({ ok: true });
+});
+// Fable no /usage: registro manual do % oficial (a linha de status não traz limite por modelo). Expira na renovação semanal.
+api.post("/fable-manual", async (c) => {
+  const { pct } = (await c.req.json()) as { pct: number | null };
+  if (pct == null) {
+    rmSync(P.fableManual, { force: true });
+  } else {
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) return c.json({ ok: false, error: "informe um número de 0 a 100" }, 400);
+    const w7 = snapshot?.verdict.windows.find((w) => w.id === "7d");
+    writeJson(P.fableManual, { pct, at: new Date().toISOString(), resetsAt: w7?.resetsAt ?? null });
+  }
+  snapshot = buildSnapshot();
+  publish("snapshot", snapshot);
+  return c.json({ ok: true });
+});
+api.get("/pulses", (c) => c.json(readJsonl(P.pulses).slice(-40)));
 api.get("/proposals", (c) => c.json(listProposals()));
 api.post("/proposals/:file/apply-widget", async (c) => {
   const f = c.req.param("file");
@@ -209,11 +271,16 @@ api.post("/proposals/:file/apply-widget", async (c) => {
 
 api.get("/chat", (c) => c.json(chatHistory()));
 api.post("/chat", async (c) => {
-  const { message } = (await c.req.json()) as { message: string };
+  // `context` (tela atual) chega do cliente mas ainda não entra no prompt: mudança de
+  // texto lido pelo LLM é minuta (docs/minuta-chat-contexto.md) até o dono aprovar.
+  const { message } = (await c.req.json()) as { message: string; context?: string };
   if (!message?.trim()) return c.json({ error: "mensagem vazia" }, 400);
   chat(message.trim()).catch((e) => publish("chat", { type: "error", error: (e as Error).message }));
   return c.json({ accepted: true }, 202);
 });
+api.post("/chat/stop", (c) => c.json({ stopped: stopChatRun() }));
+// Ajustes → Linha de status → "como ativar": o único lugar da UI que mostra o comando (dono é dev)
+api.get("/setup/statusline", (c) => c.json({ snippet: JSON.stringify({ statusLine: { type: "command", command: `node ${join(APP_ROOT, "statusline.mjs").split("\\").join("/")}` } }, null, 2) }));
 api.post("/chat/reset", (c) => {
   resetChat();
   return c.json({ ok: true });

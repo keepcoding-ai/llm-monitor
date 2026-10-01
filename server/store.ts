@@ -32,6 +32,10 @@ export const P = {
   chatSession: join(STATE, "chat", "session.json"),
   backups: join(STATE, "backups"),
   derived: join(STATE, "derived.json"),
+  fableManual: join(STATE, "fable-manual.json"),
+  tempDefault: join(STATE, "temp-default.json"),
+  cabeEstimates: join(STATE, "memory", "cabe-estimates.jsonl"),
+  cabeChecks: join(STATE, "memory", "cabe-checks.jsonl"),
 };
 
 export function expandHome(p: string): string {

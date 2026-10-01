@@ -29,11 +29,11 @@ function platformSpentToday(snap: Snapshot): number {
 export function budgetGuard(): string | null {
   const snap = buildSnapshot();
   const spent = platformSpentToday(snap);
-  if (spent >= snap.platform.budget) return `Teto diário da plataforma atingido (US$ ${spent.toFixed(2)} de US$ ${snap.platform.budget.toFixed(2)}). Ajuste em config ou espere amanhã.`;
+  if (spent >= snap.platform.budget) return `Teto diário da plataforma atingido (US$ ${spent.toFixed(2).replace(".", ",")} de US$ ${snap.platform.budget.toFixed(2).replace(".", ",")}). Aumente o teto em Ajustes → Plataforma ou espere amanhã.`;
   return null;
 }
 
-function runClaude(args: string[], prompt: string, onEvent?: (ev: any) => void, timeoutMs = 240_000): Promise<RunResult> {
+function runClaude(args: string[], prompt: string, onEvent?: (ev: any) => void, timeoutMs = 240_000, onSpawn?: (kill: () => void) => void): Promise<RunResult> {
   mkdirSync(AGENT_WORK, { recursive: true });
   return new Promise((resolve) => {
     const child = spawn(claudeBin(), ["-p", ...args], { cwd: AGENT_WORK, env: { ...process.env }, windowsHide: true });
@@ -42,6 +42,7 @@ function runClaude(args: string[], prompt: string, onEvent?: (ev: any) => void, 
     let buf = "";
     let result: RunResult = { ok: false, text: "", costUSD: null };
     const timer = setTimeout(() => child.kill(), timeoutMs);
+    onSpawn?.(() => child.kill());
     child.stdout.on("data", (d) => {
       const s = d.toString();
       out += s;
@@ -204,6 +205,16 @@ export async function escalate(rec: PulseRecord): Promise<NonNullable<PulseRecor
 
 export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string };
 let chatBusy = false;
+let stopChat: (() => void) | null = null;
+let chatStopped = false;
+
+/** Botão "parar" do chat: encerra a resposta em andamento; o que já chegou fica. */
+export function stopChatRun(): boolean {
+  if (!stopChat) return false;
+  chatStopped = true;
+  stopChat();
+  return true;
+}
 
 export function chatHistory(): ChatMsg[] {
   return readJsonl<ChatMsg>(P.chat).slice(-200);
@@ -237,19 +248,25 @@ export async function chat(message: string): Promise<void> {
   if (sess.sessionId) args.push("--resume", sess.sessionId);
   publish("chat", { type: "start", id });
   let text = "";
+  chatStopped = false;
   try {
     const res = await runClaude(args, message, (ev) => {
       if (ev.type === "stream_event" && ev.event?.type === "content_block_delta" && ev.event.delta?.type === "text_delta") {
         text += ev.event.delta.text;
         publish("chat", { type: "delta", id, text: ev.event.delta.text });
       }
-    });
+    }, undefined, (kill) => (stopChat = kill));
     if (res.sessionId) writeJson(P.chatSession, { sessionId: res.sessionId });
-    const m: ChatMsg = { id, role: "assistant", text: res.ok ? res.text || text : text, at: new Date().toISOString(), costUSD: res.costUSD, error: res.ok ? undefined : res.error };
+    const m: ChatMsg = chatStopped
+      ? { id, role: "assistant", text: text ? `${text}
+
+_(interrompida por você)_` : "", at: new Date().toISOString(), costUSD: res.costUSD, error: text ? undefined : "Resposta interrompida por você antes de começar." }
+      : { id, role: "assistant", text: res.ok ? res.text || text : text, at: new Date().toISOString(), costUSD: res.costUSD, error: res.ok ? undefined : res.error };
     appendJsonl(P.chat, [m]);
     publish("chat", { type: "message", message: m });
   } finally {
     chatBusy = false;
+    stopChat = null;
   }
 }
 
@@ -257,7 +274,7 @@ export function resetChat(): void {
   writeJson(P.chatSession, {});
 }
 
-export function listProposals(): { file: string; at: string; model: string; title: string; rationale: string; hasWidget: boolean }[] {
+export function listProposals(): { file: string; at: string; model: string; title: string; rationale: string; hasWidget: boolean; costUSD: number | null }[] {
   if (!existsSync(P.proposals)) return [];
   return readdirSync(P.proposals)
     .filter((f) => f.endsWith(".json"))
@@ -267,6 +284,6 @@ export function listProposals(): { file: string; at: string; model: string; titl
     .map((f) => {
       const j = JSON.parse(readFileSync(join(P.proposals, f), "utf8"));
       const p = typeof j.proposal === "object" && j.proposal ? j.proposal : {};
-      return { file: f, at: j.at, model: j.model, title: p.title ?? "Proposta sem título", rationale: p.rationale ?? String(j.proposal).slice(0, 400), hasWidget: Boolean(p.widget?.code) };
+      return { file: f, at: j.at, model: j.model, title: p.title ?? "Proposta sem título", rationale: p.rationale ?? String(j.proposal).slice(0, 400), hasWidget: Boolean(p.widget?.code), costUSD: typeof j.costUSD === "number" ? j.costUSD : null };
     });
 }

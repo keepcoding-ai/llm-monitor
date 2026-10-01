@@ -7,7 +7,8 @@
     "dev": "node scripts/dev.mjs",
     "server": "tsx server/index.ts",
     "web": "vite",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test server/*.test.ts"
   },
   "dependencies": {
     "@atrium/core-ui": "file:../../atrium/packages/core-ui",

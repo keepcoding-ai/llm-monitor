@@ -17,17 +17,18 @@ import { APP_ROOT, P, WIDGETS_DIR, appendJsonl, readJson, writeJson } from "./st
 import { publish, clientCount } from "./bus.ts";
 import type { Layout, SlotSpec, WidgetVersion } from "../shared/snapshot.ts";
 
+// Revisão do layout: quando muda, os slots são refeitos a partir de DEFAULT_SLOTS
+// (histórico e versões de cada widget preservados). page/order dizem onde o widget
+// mora (plano §7); o shell é dono do resto (veredito, Cabe?, chat, Ajustes).
+export const LAYOUT_REV = 4;
 const DEFAULT_SLOTS: Omit<SlotSpec, "version">[] = [
-  { id: "autonomia", widget: "autonomia", title: "Autonomia", span: { md: 2, xl: 2, tv: 2 } },
-  { id: "limites", widget: "limites", title: "Limites do plano", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "consumo", widget: "consumo", title: "Consumo no tempo", span: { md: 2, xl: 2, tv: 2 } },
-  { id: "sugestoes", widget: "sugestoes", title: "Sugestões", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "por-modelo", widget: "por-modelo", title: "Por modelo", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "picos", widget: "picos", title: "Picos", span: { md: 1, xl: 2, tv: 2 } },
-  { id: "contas-soul", widget: "contas-soul", title: "Contas Soul", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "controle", widget: "controle", title: "Controle", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "marcas", widget: "marcas", title: "Marcas", span: { md: 1, xl: 1, tv: 1 } },
-  { id: "chat", widget: "chat", title: "Chat", span: { md: 2, xl: 3, tv: 2 } },
+  { id: "por-que", widget: "por-que", title: "Por quê hoje", page: "agora", order: 10, span: { md: 1, xl: 1, tv: 1 } },
+  { id: "reserva-linha", widget: "reserva-linha", title: "Reserva", page: "agora", order: 20, span: { md: 1, xl: 1, tv: 1 } },
+  { id: "semana-ritmo", widget: "semana-ritmo", title: "Chego na renovação?", page: "semana", order: 10, span: { md: 2, xl: 2, tv: 2 } },
+  { id: "o-que-comeu", widget: "o-que-comeu", title: "O que comeu", page: "semana", order: 20, span: { md: 1, xl: 1, tv: 1 } },
+  { id: "janelas", widget: "janelas", title: "Janelas de 5 h", page: "semana", order: 30, span: { md: 1, xl: 1, tv: 1 } },
+  { id: "reserva", widget: "reserva", title: "Contas", page: "reserva", order: 10, span: { md: 2, xl: 2, tv: 2 } },
+  { id: "avisos", widget: "avisos", title: "Avisos abertos", page: "avisos", order: 10, span: { md: 2, xl: 2, tv: 2 } },
 ];
 
 function versionsOnDisk(id: string): number[] {
@@ -42,15 +43,18 @@ function versionsOnDisk(id: string): number[] {
 
 export function loadLayout(): Layout {
   const l = readJson<Layout | null>(P.layout, null);
-  if (l) return l;
+  if (l && l.rev === LAYOUT_REV) return l;
   const now = new Date().toISOString();
-  const fresh: Layout = { slots: [], versions: {}, history: {} };
+  const fresh: Layout = { rev: LAYOUT_REV, slots: [], versions: l?.versions ?? {}, history: l?.history ?? {} };
   for (const s of DEFAULT_SLOTS) {
     const vs = versionsOnDisk(s.widget);
     if (vs.length === 0) continue;
-    fresh.slots.push({ ...s, version: vs[vs.length - 1] });
-    fresh.versions[s.widget] = vs.map((v) => ({ v, status: v === vs[vs.length - 1] ? "active" : "retired", at: now, note: "versão inicial" }));
-    fresh.history[s.widget] = [vs[vs.length - 1]];
+    const known = fresh.versions[s.widget];
+    const active = known?.find((x) => x.status === "active")?.v ?? vs[vs.length - 1];
+    fresh.slots.push({ ...s, version: active });
+    if (!known) fresh.versions[s.widget] = vs.map((v) => ({ v, status: v === active ? "active" : "retired", at: now, note: "versão inicial" }));
+    else for (const v of vs) if (!known.some((x) => x.v === v)) known.push({ v, status: v === active ? "active" : "retired", at: now, note: "versão inicial" });
+    if (!fresh.history[s.widget]?.length) fresh.history[s.widget] = [active];
   }
   writeJson(P.layout, fresh);
   return fresh;
