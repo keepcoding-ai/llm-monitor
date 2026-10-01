@@ -2,7 +2,7 @@
 // Rodar: npm test  (node --import tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeVerdict, divergentSessions, humanTime, type Reading } from "./verdict.ts";
+import { computeVerdict, counterSeries, humanTime, otherAccounts, robustSlope, type Reading } from "./verdict.ts";
 import { band, shouldNotify } from "../shared/notify.ts";
 
 const L = (y: number, mo: number, d: number, h: number, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
@@ -13,6 +13,7 @@ const MIN = 60_000;
 const NOW = L(2026, 10, 1, 14);
 const WEEK_RESET = iso(L(2026, 10, 7, 15));
 const FIVE_RESET = iso(L(2026, 10, 1, 16, 20));
+const OTHER_WEEK_RESET = iso(L(2026, 10, 5, 9));
 
 function series(fromPct: number, toPct: number, minutes: number, five?: { from: number; to: number; reset: string }, session = "s-aaaa"): Reading[] {
   const out: Reading[] = [];
@@ -111,16 +112,54 @@ test("hora: madrugada", () => assert.equal(humanTime(L(2026, 10, 4, 3), NOW, "pr
 test("hora: reset em 2–6 dias → dia e hora exata", () => assert.equal(humanTime(L(2026, 10, 7, 15), NOW, "reset"), "quarta-feira, 15:00"));
 test("hora: 7 dias ou mais → data", () => assert.equal(humanTime(L(2026, 10, 8, 10), NOW, "reset"), "8 de out."));
 
-// ---------------------------------------------------------------- sessões divergentes (1)
+// ---------------------------------------------------------------- conta inferida (3)
 
-test("sessões divergentes: 29 % e 6 % no mesmo minuto geram aviso; o veredito segue a mais recente", () => {
+test("mesma conta, 3 sessões intercaladas com uma ociosa atrasada: veredito e ritmo estáveis", () => {
+  // contador real sobe 0,6 pt/min (36 %/h); a sessão s3 fica ociosa repetindo 6 %
+  const rows: Reading[] = [];
+  for (let i = 0; i <= 30; i++) {
+    const at = NOW - (30 - i) * MIN;
+    const sess = ["s1", "s2", "s3"][i % 3];
+    const v = sess === "s3" ? 6 : 29 + 0.6 * i;
+    rows.push({ at: iso(at), session: sess, five: { usedPct: v, resetsAt: FIVE_RESET }, seven: { usedPct: 30, resetsAt: WEEK_RESET } });
+  }
+  const states = new Set<string>();
+  const rates: number[] = [];
+  // o veredito é recalculado com cada sessão como "mais recente"
+  for (let k = 0; k < 3; k++) {
+    const hist = rows.slice(0, rows.length - k);
+    const v = computeVerdict({ now: NOW, latest: hist.at(-1)!, history: hist });
+    states.add(v.state);
+    const w5 = v.windows.find((w) => w.id === "5h")!;
+    assert.ok(w5.usedPct! >= 45, `usado ${w5.usedPct}`);
+    rates.push(w5.ratePctPerHour!);
+  }
+  assert.equal(states.size, 1);
+  for (const r of rates) assert.ok(Math.abs(r - 36) < 1, `ritmo ${r}`);
+});
+
+test("pico isolado não move o contador", () => {
+  // a sessão s1 informou 90 e depois 12: o 90 foi falha (o contador não desce)
+  const pts = [10, 11, 90, 12, 13].map((v, i) => ({ t: NOW + i * MIN, v, s: "s1" }));
+  assert.deepEqual(counterSeries(pts).map((p) => p.v), [10, 11, 12, 13]);
+  const r = robustSlope(counterSeries(pts))!;
+  assert.ok(r > 30 && r <= 60, `ritmo ${r}`);
+  // sessão ociosa atrasada (outra sessão, valor menor) sai; o valor alto real fica
+  assert.deepEqual(counterSeries([{ t: NOW, v: 29, s: "a" }, { t: NOW + MIN, v: 6, s: "b" }, { t: NOW + 2 * MIN, v: 6, s: "b" }]).map((p) => p.v), [29]);
+});
+
+test("renovação diferente = outra conta: aviso, e o veredito segue a mais recente", () => {
   const a: Reading = { at: iso(NOW - 2 * MIN), session: "s-aaaa", seven: { usedPct: 29, resetsAt: WEEK_RESET } };
-  const b: Reading = { at: iso(NOW - MIN), session: "s-bbbb", seven: { usedPct: 6, resetsAt: WEEK_RESET } };
-  const d = divergentSessions([a, b], NOW);
-  assert.deepEqual(d, { window: "7d", a: 29, b: 6 });
+  const b: Reading = { at: iso(NOW - MIN), session: "s-bbbb", seven: { usedPct: 6, resetsAt: OTHER_WEEK_RESET } };
+  const o = otherAccounts([a, b], NOW);
+  assert.equal(o?.active, b);
+  assert.equal(o?.other, a);
   const v = computeVerdict({ now: NOW, latest: b, history: [a, b] });
-  assert.equal(v.sessionTail, "bbbb");
   assert.equal(v.windows.find((w) => w.id === "7d")!.usedPct, 6);
+  // mesma renovação (dentro da tolerância), porcentagens diferentes: mesma conta, sem aviso
+  const c: Reading = { ...b, seven: { usedPct: 6, resetsAt: new Date(Date.parse(WEEK_RESET) + 30_000).toISOString() } };
+  assert.equal(otherAccounts([a, c], NOW), null);
+  assert.equal(computeVerdict({ now: NOW, latest: c, history: [a, c] }).windows.find((w) => w.id === "7d")!.usedPct, 29);
 });
 
 // ---------------------------------------------------------------- notificação (regra do passo 6)

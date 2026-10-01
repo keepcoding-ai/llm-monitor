@@ -32,8 +32,16 @@ export function CabeBlock() {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 px-4">
-        <p className="text-sm text-muted-foreground">Vou rodar…</p>
-        <ToggleGroup
+        {!c.enoughHistory && (
+          <p className="text-sm text-muted-foreground" data-testid="cabe-sem-historico">
+            Ainda sem histórico para estimar uma rodada:{" "}
+            {c.historySince
+              ? `${c.windowsClosed} de ${c.windowsNeeded} janelas de 5 h fechadas, registros desde ${new Date(c.historySince).toLocaleDateString("pt-BR", { day: "numeric", month: "short" })}; os valores aparecem com 3 semanas de uso.`
+              : "nenhum uso registrado ainda."}
+          </p>
+        )}
+        {c.presets.length > 0 && <p className="text-sm text-muted-foreground">Vou rodar…</p>}
+        {c.presets.length > 0 && <ToggleGroup
           type="single"
           value={pick}
           onValueChange={(v: string) => {
@@ -51,7 +59,7 @@ export function CabeBlock() {
               {p.label} <span className="tabular text-muted-foreground">{usd(p.usd, 0)}</span>
             </ToggleGroupItem>
           ))}
-        </ToggleGroup>
+        </ToggleGroup>}
         <AnimatePresence mode="wait" initial={false}>
           {ans && preset && (
             <motion.div key={preset.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} className="flex flex-col gap-1" aria-live="polite" data-testid="cabe-answer">
@@ -69,7 +77,7 @@ export function CabeBlock() {
         </AnimatePresence>
         <p className="text-xs text-muted-foreground">
           {c.usdPerPctWeek != null ? `1 % da semana ≈ ${usd(c.usdPerPctWeek, 0)} (aprendido de ${c.pairsWeek} leituras)` : `Ainda sem conversão para % do plano (${c.pairsWeek} de 6 leituras) — por enquanto, só US$.`}
-          {c.generic ? " · Valores de estimativa genérica até ter 4 semanas de histórico." : " · Valores do seu histórico, equivalente API."}
+          {c.presets.length > 0 && " · Valores do seu histórico, equivalente API."}
         </p>
       </CardContent>
     </Card>

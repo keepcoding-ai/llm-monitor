@@ -83,23 +83,19 @@ export function learnRate(history: Reading[], costBetween: (a: number, b: number
   return { usdPerPct: n >= 6 && sxx > 0 ? sxy / sxx : null, pairs: n };
 }
 
-// valores genéricos só enquanto não há 4 semanas de histórico — a tela avisa
-const GENERIC: Record<CabePreset["id"], number> = { leve: 20, pesada: 80, agentes: 200, fable: 40 };
+// presets só do histórico real: sem janelas suficientes, não há preset (nada inventado)
+const WINDOWS_NEEDED = 8;
 
 export function buildCabe(cc28: UsageRecord[], history: Reading[], now: number): Cabe {
   const own = cc28.filter((r) => !r.platform);
   const wins = fiveHourWindows(own).filter((w) => w.end <= now && w.cost > 0);
   const costs = wins.map((w) => w.cost).sort((a, b) => a - b);
-  const generic = !own.length || own[0].ts > now - 21 * D || costs.length < 8;
+  const enoughHistory = own.length > 0 && own[0].ts <= now - 21 * D && costs.length >= WINDOWS_NEEDED;
   const fableHours = new Map<number, number>();
   for (const r of own) if (/fable|mythos/.test(r.model)) fableHours.set(Math.floor(r.ts / H), (fableHours.get(Math.floor(r.ts / H)) ?? 0) + (r.cost ?? 0));
   const fableHour = fableHours.size ? [...fableHours.values()].reduce((s, x) => s + x, 0) / fableHours.size : null;
-  const presets: CabePreset[] = generic
-    ? [
-        { id: "leve", label: "sessão leve", usd: GENERIC.leve, basis: "estimativa genérica" },
-        { id: "pesada", label: "sessão pesada", usd: GENERIC.pesada, basis: "estimativa genérica" },
-        { id: "agentes", label: "time de agentes", usd: GENERIC.agentes, basis: "estimativa genérica" },
-      ]
+  const presets: CabePreset[] = !enoughHistory
+    ? []
     : [
         { id: "leve", label: "sessão leve", usd: percentile(costs, 0.25), basis: `p25 de ${costs.length} janelas de 5 h` },
         { id: "pesada", label: "sessão pesada", usd: percentile(costs, 0.75), basis: `p75 de ${costs.length} janelas de 5 h` },
@@ -109,7 +105,7 @@ export function buildCabe(cc28: UsageRecord[], history: Reading[], now: number):
   const between = costIndex(own.filter((r) => r.ts >= now - 8 * D));
   const wk = learnRate(history, between, "seven");
   const fh = learnRate(history, between, "five");
-  return { presets, generic, usdPerPctWeek: wk.usdPerPct, usdPerPct5h: fh.usdPerPct, pairsWeek: wk.pairs, pairs5h: fh.pairs };
+  return { presets, enoughHistory, windowsClosed: costs.length, windowsNeeded: WINDOWS_NEEDED, historySince: own.length ? new Date(own[0].ts).toISOString() : null, usdPerPctWeek: wk.usdPerPct, usdPerPct5h: fh.usdPerPct, pairsWeek: wk.pairs, pairs5h: fh.pairs };
 }
 
 // ------------------------------------------------------------ previsão vs real (fecha o ciclo de G6)

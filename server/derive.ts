@@ -8,7 +8,7 @@ import { soulPools, soulVocabulary } from "./collector/soul.ts";
 import { readClaudeSettings } from "./control.ts";
 import { buildCabe, checkEstimates, fiveHourWindows } from "./cabe.ts";
 import type { Cabe } from "../shared/cabe.ts";
-import { computeVerdict, divergentSessions, type FableManual, type Reading } from "./verdict.ts";
+import { computeVerdict, humanTime, otherAccounts, sameReset, type FableManual, type Reading } from "./verdict.ts";
 import type { Verdict, Autonomy, Bucket, Limits, LimitWindow, Named, PulseRecord, Snapshot, Suggestion } from "../shared/snapshot.ts";
 
 const H = 3600_000;
@@ -144,8 +144,12 @@ export function buildVerdict(now: number, lastUsageAt: number | null, history: R
   const weekStart = latest?.seven?.resetsAt ? Date.parse(latest.seven.resetsAt) - 7 * D : now - 7 * D;
   const fable = since(weekStart).filter((r) => r.source === "claude-code" && family(r.model) === "fable");
   const fableUsage = fable.length ? { tokens: fable.reduce((x, r) => x + r.input + r.output + r.cacheWrite + r.cacheRead, 0), cost: fable.reduce((x, r) => x + (r.cost ?? 0), 0), since: new Date(weekStart).toISOString() } : null;
-  const div = divergentSessions(history, now);
-  if (div) raiseFlag({ key: "sessoes-divergentes", kind: "dado-divergente", level: "warning", title: "Duas sessões informam limites diferentes — o veredito segue a mais recente", detail: `Na ${div.window === "7d" ? "semana" : "sessão de 5 h"}, uma sessão do Claude Code informa ${Math.round(div.a)} % e outra ${Math.round(div.b)} %. Provavelmente são contas diferentes abertas ao mesmo tempo; o veredito segue a leitura mais recente.` });
+  const acc = otherAccounts(latest ? [...history, latest] : history, now);
+  if (acc) {
+    const pct = (r: Reading) => (r.seven ? `semana em ${Math.round(r.seven.usedPct)} %, renova ${humanTime(r.seven.resetsAt ?? r.at, now, "reset")}` : `sessão de 5 h em ${Math.round(r.five!.usedPct)} %`);
+    raiseFlag({ key: "outra-conta", kind: "dado-divergente", level: "warning", title: "Outra conta do Claude aberta — o veredito segue a mais recente", detail: `Há sessões do Claude Code com limites de renovação diferentes, então são contas diferentes. Conta mais recente: ${pct(acc.active)}. Outra: ${pct(acc.other)}. O veredito segue a conta mais recente.` });
+  } else clearFlag("outra-conta");
+  clearFlag("sessoes-divergentes"); // aviso antigo: divergência entre sessões da mesma conta era atraso, não outra conta
   return computeVerdict({ now, latest, history, fableManual: readFableManual(), fableUsage, lastUsageAt });
 }
 
@@ -155,13 +159,13 @@ function buildSemana(v: Verdict, history: Reading[], cc28: UsageRecord[], cabe: 
   const w7 = v.windows.find((w) => w.id === "7d");
   const resetsAt = w7?.resetsAt ?? null;
   const weekStart = resetsAt ? Date.parse(resetsAt) - 7 * D : null;
-  const latestSession = v.sessionTail ? history.filter((h) => h.session?.endsWith(v.sessionTail!)).at(-1)?.session ?? null : null;
   // série oficial da semana: mesma renovação; sessão atual (ou leituras antigas sem sessão); por hora; nunca desce
   const byHour = new Map<number, number>();
   for (const h of history) {
-    if (!h.seven || h.seven.resetsAt !== resetsAt) continue;
-    if (h.session && latestSession && h.session !== latestSession) continue;
-    byHour.set(Math.floor(Date.parse(h.at) / H) * H, h.seven.usedPct);
+    // mesma conta (mesma renovação), todas as sessões; o máximo da hora descarta sessão ociosa atrasada
+    if (!h.seven || !sameReset(h.seven.resetsAt, resetsAt)) continue;
+    const k = Math.floor(Date.parse(h.at) / H) * H;
+    byHour.set(k, Math.max(byHour.get(k) ?? 0, h.seven.usedPct));
   }
   let run = 0;
   const points = [...byHour].sort((a, b) => a[0] - b[0]).map(([t, pct]) => ({ t: new Date(t).toISOString(), pct: (run = Math.max(run, pct)) }));
@@ -180,7 +184,7 @@ function buildSemana(v: Verdict, history: Reading[], cc28: UsageRecord[], cabe: 
   const lastWeek = weekStart != null && own.length && own[0].ts <= weekStart - 7 * D ? own.filter((r) => r.ts >= weekStart - 7 * D && r.ts < weekStart).reduce((x, r) => x + (r.cost ?? 0), 0) : null;
   const share = (rows: Named[]) => rows.map((n) => ({ key: n.key, cost: n.cost, share: cost ? n.cost / cost : 0 }));
   const side = wk.filter((r) => r.side).reduce((x, r) => x + (r.cost ?? 0), 0);
-  const slackBelow = cabe.generic ? null : cabe.presets.find((p) => p.id === "leve")?.usd ?? null;
+  const slackBelow = !cabe.enoughHistory ? null : cabe.presets.find((p) => p.id === "leve")?.usd ?? null;
   const wins = weekStart != null ? fiveHourWindows(wk).map((w) => ({ start: new Date(w.start).toISOString(), end: new Date(w.end).toISOString(), cost: w.cost, active: now < w.end, slack: slackBelow != null && now >= w.end && w.cost < slackBelow })) : [];
   return {
     weekStart: weekStart != null ? new Date(weekStart).toISOString() : null,

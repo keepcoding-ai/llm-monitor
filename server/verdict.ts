@@ -120,10 +120,70 @@ function project(id: VerdictWindow["id"], usedPct: number | null, resetsAt: stri
   return w;
 }
 
-/** Leituras usadas no ritmo: mesma sessão da mais recente (quando ela tem sessão). */
-function sameSession(history: Reading[], latest: Reading): Reading[] {
-  if (!latest.session) return history;
-  return history.filter((h) => h.session === latest.session);
+// ------------------------------------------------------------ conta inferida
+//
+// rate_limits é da CONTA, não da sessão: sessões diferentes da mesma conta descrevem
+// o mesmo contador. A conta se infere pela renovação da semana (resetsAt igual, com
+// tolerância); sem semana, pela da sessão de 5 h. Sessão ociosa repete o último valor
+// que recebeu — por isso uma leitura abaixo do que a conta já mostrou é atraso, não
+// queda (o contador de uma janela nunca desce).
+
+const RESET_TOL = 2 * 60_000;
+export const sameReset = (a: string | null | undefined, b: string | null | undefined) =>
+  a != null && b != null && Math.abs(Date.parse(a) - Date.parse(b)) <= RESET_TOL;
+
+function accountReset(r: Reading): string | null {
+  return r.seven?.resetsAt ?? r.five?.resetsAt ?? null;
+}
+export function sameAccount(a: Reading, b: Reading): boolean {
+  if (a.seven?.resetsAt && b.seven?.resetsAt) return sameReset(a.seven.resetsAt, b.seven.resetsAt);
+  if (a.five?.resetsAt && b.five?.resetsAt) return sameReset(a.five.resetsAt, b.five.resetsAt);
+  return accountReset(a) == null || accountReset(b) == null;
+}
+
+/**
+ * Série única de um contador, todas as sessões juntas, ordenada no tempo.
+ * Ruído descartado: (1) pico isolado — a própria sessão informa menos depois
+ * (dentro de uma janela o contador nunca desce, então o valor alto foi falha);
+ * (2) atraso — abaixo do máximo que o contador já mostrou (sessão ociosa).
+ */
+export type CounterPoint = { t: number; v: number; s?: string | null };
+export function counterSeries(points: CounterPoint[]): { t: number; v: number }[] {
+  const p = [...points].sort((a, b) => a.t - b.t);
+  // menor valor que cada sessão informa daqui pra frente (varredura de trás pra frente)
+  const laterMin = new Map<string, number>();
+  const spike = new Array<boolean>(p.length).fill(false);
+  for (let i = p.length - 1; i >= 0; i--) {
+    const x = p[i];
+    if (!x.s) continue;
+    const m = laterMin.get(x.s);
+    if (m != null && m < x.v) spike[i] = true;
+    laterMin.set(x.s, m == null ? x.v : Math.min(m, x.v));
+  }
+  const noSpike = p.filter((_, i) => !spike[i]);
+  const out: { t: number; v: number }[] = [];
+  let max = -Infinity;
+  for (const x of noSpike) {
+    if (x.v < max) continue;
+    max = x.v;
+    out.push(x);
+  }
+  return out;
+}
+
+/** Inclinação robusta (Theil-Sen, pontos/hora). null sem 2 pontos espaçados ≥ 3 min. */
+export function robustSlope(points: { t: number; v: number }[]): number | null {
+  if (points.length < 2 || points[points.length - 1].t - points[0].t < 3 * 60_000) return null;
+  // com muitos pontos, amostra uniforme para manter o custo O(n²) pequeno
+  const step = Math.max(1, Math.ceil(points.length / 300));
+  const ps = points.filter((_, i) => i % step === 0 || i === points.length - 1);
+  const s: number[] = [];
+  for (let i = 0; i < ps.length; i++)
+    for (let j = i + 1; j < ps.length; j++) if (ps[j].t - ps[i].t >= 60_000) s.push((ps[j].v - ps[i].v) / ((ps[j].t - ps[i].t) / H));
+  if (!s.length) return null;
+  s.sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 export function computeVerdict(inp: VerdictInput): Verdict {
@@ -140,15 +200,18 @@ export function computeVerdict(inp: VerdictInput): Verdict {
       sessionTail: null,
     };
   }
-  const hist = sameSession(inp.history, latest).filter((h) => Date.parse(h.at) <= now);
+  // todas as sessões da conta da leitura mais recente
+  const seen = new Set(inp.history.map((h) => h.at + "|" + (h.session ?? "")));
+  const hist = [...inp.history, ...(seen.has(latest.at + "|" + (latest.session ?? "")) ? [] : [latest])].filter((h) => Date.parse(h.at) <= now && sameAccount(h, latest));
   const windows: VerdictWindow[] = [];
 
   // sessão de 5 h
   if (latest.five && (!latest.five.resetsAt || Date.parse(latest.five.resetsAt) > now)) {
     const w5 = latest.five;
-    const pts = hist.filter((h) => h.five && h.five.resetsAt === w5.resetsAt && now - Date.parse(h.at) <= 90 * 60_000).map((h) => ({ t: Date.parse(h.at), v: h.five!.usedPct }));
-    const rate = slope(pts);
-    windows.push(project("5h", w5.usedPct, w5.resetsAt, rate, now, rate == null ? { note: "ritmo ainda sem pontos suficientes" } : {}));
+    const series = counterSeries(hist.filter((h) => h.five && (w5.resetsAt ? sameReset(h.five.resetsAt, w5.resetsAt) : !h.five.resetsAt)).map((h) => ({ t: Date.parse(h.at), v: h.five!.usedPct, s: h.session })));
+    const used = series.length ? series[series.length - 1].v : w5.usedPct;
+    const rate = robustSlope(series.filter((p) => now - p.t <= 90 * 60_000));
+    windows.push(project("5h", used, w5.resetsAt, rate, now, rate == null ? { note: "ritmo ainda sem pontos suficientes" } : {}));
   } else {
     windows.push({ ...project("5h", null, null, null, now), note: "renovada — aguardando a primeira leitura" });
   }
@@ -158,12 +221,13 @@ export function computeVerdict(inp: VerdictInput): Verdict {
   if (latest.seven) {
     const w7 = latest.seven;
     weekStart = w7.resetsAt ? Date.parse(w7.resetsAt) - 7 * D : null;
-    const pts = hist.filter((h) => h.seven && h.seven.resetsAt === w7.resetsAt && now - Date.parse(h.at) <= D).map((h) => ({ t: Date.parse(h.at), v: h.seven!.usedPct }));
-    const recent = slope(pts);
+    const series = counterSeries(hist.filter((h) => h.seven && (w7.resetsAt ? sameReset(h.seven.resetsAt, w7.resetsAt) : !h.seven.resetsAt)).map((h) => ({ t: Date.parse(h.at), v: h.seven!.usedPct, s: h.session })));
+    const used = series.length ? series[series.length - 1].v : w7.usedPct;
+    const recent = robustSlope(series.filter((p) => now - p.t <= D));
     const hoursSince = weekStart != null ? (now - weekStart) / H : null;
-    const avg = hoursSince && hoursSince > 0 ? w7.usedPct / hoursSince : null;
+    const avg = hoursSince && hoursSince > 0 ? used / hoursSince : null;
     const rate = recent == null ? avg : avg == null ? recent : Math.max(recent, avg);
-    windows.push(project("7d", w7.usedPct, w7.resetsAt, rate, now, { rateAvgPctPerHour: avg, rateRecentPctPerHour: recent }));
+    windows.push(project("7d", used, w7.resetsAt, rate, now, { rateAvgPctPerHour: avg, rateRecentPctPerHour: recent }));
   }
 
   // Fable na semana
@@ -253,23 +317,17 @@ function fableNote(u: FableUsage | undefined, now: number): Partial<VerdictWindo
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const fmt = (n: number) => Math.round(n).toLocaleString("pt-BR");
 
-// ------------------------------------------------------------ sessões divergentes
+// ------------------------------------------------------------ outra conta
 
-/** Última leitura de cada sessão nos últimos 10 min; diferença > 10 pontos na mesma janela. */
-export function divergentSessions(history: Reading[], now: number): { window: "5h" | "7d"; a: number; b: number } | null {
-  const last = new Map<string, Reading>();
-  for (const h of history) {
-    if (!h.session || now - Date.parse(h.at) > 10 * 60_000) continue;
-    last.set(h.session, h);
-  }
-  const rows = [...last.values()];
-  for (const k of ["seven", "five"] as const) {
-    const vals = rows.map((r) => r[k]?.usedPct).filter((v): v is number => v != null);
-    if (vals.length < 2) continue;
-    const a = Math.max(...vals);
-    const b = Math.min(...vals);
-    if (a - b > 10) return { window: k === "seven" ? "7d" : "5h", a, b };
-  }
-  return null;
+/**
+ * Contas diferentes abertas ao mesmo tempo: nos últimos 10 min, alguma leitura com
+ * renovação diferente da conta da leitura mais recente. Sessões da mesma conta com
+ * porcentagens diferentes NÃO são aviso — é sessão ociosa repetindo valor antigo.
+ */
+export function otherAccounts(history: Reading[], now: number): { active: Reading; other: Reading } | null {
+  const recent = history.filter((h) => (h.five || h.seven) && now - Date.parse(h.at) <= 10 * 60_000 && Date.parse(h.at) <= now);
+  if (!recent.length) return null;
+  const active = recent.reduce((a, b) => (Date.parse(b.at) >= Date.parse(a.at) ? b : a));
+  const other = [...recent].reverse().find((h) => !sameAccount(h, active));
+  return other ? { active, other } : null;
 }
-

@@ -2,13 +2,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { answerCabe, type Cabe } from "../shared/cabe.ts";
-import { learnRate, percentile } from "./cabe.ts";
+import { buildCabe, learnRate, percentile } from "./cabe.ts";
 import { computeVerdict, type Reading } from "./verdict.ts";
 
 const NOW = new Date(2026, 9, 1, 14).getTime();
 const WEEK_RESET = new Date(2026, 9, 7, 15).toISOString();
 const iso = (t: number) => new Date(t).toISOString();
-const base: Cabe = { presets: [], generic: false, usdPerPctWeek: 10, usdPerPct5h: 3, pairsWeek: 12, pairs5h: 20 };
+const base: Cabe = { presets: [], enoughHistory: true, windowsClosed: 12, windowsNeeded: 8, historySince: null, usdPerPctWeek: 10, usdPerPct5h: 3, pairsWeek: 12, pairs5h: 20 };
 const reading = (week: number, ratePerH: number): Reading[] =>
   Array.from({ length: 7 }, (_, i) => ({ at: iso(NOW - (6 - i) * 10 * 60_000), session: "s1", seven: { usedPct: week - ratePerH * ((6 - i) / 6), resetsAt: WEEK_RESET } }));
 
@@ -49,4 +49,14 @@ test("conversão aprendida: pares por sessão, regressão pela origem; precisa d
 test("percentis dos presets", () => {
   assert.equal(percentile([10, 20, 30, 40, 50], 0.25), 20);
   assert.equal(percentile([10, 20, 30, 40, 50], 0.95), 48);
+});
+
+test("histórico curto: nenhum preset inventado, só a contagem real", () => {
+  const rec = (h: number, cost: number) => ({ ts: NOW - h * 3600_000, cost, model: "claude-sonnet", source: "claude-code" }) as any;
+  const c = buildCabe([rec(30, 4), rec(20, 9), rec(10, 2)], [], NOW);
+  assert.equal(c.enoughHistory, false);
+  assert.deepEqual(c.presets, []);
+  assert.equal(c.windowsClosed, 3);
+  assert.equal(c.windowsNeeded, 8);
+  assert.ok(c.historySince);
 });

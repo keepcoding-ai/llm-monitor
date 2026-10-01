@@ -5,8 +5,13 @@ import type { Verdict } from "./snapshot.ts";
 export type CabePreset = { id: "leve" | "pesada" | "agentes" | "fable"; label: string; usd: number; basis: string };
 export type Cabe = {
   presets: CabePreset[];
-  /** true = ainda sem 4 semanas de histórico: valores genéricos, avisados na tela */
-  generic: boolean;
+  /** false = histórico ainda curto: sem presets de rodada (nunca número inventado) */
+  enoughHistory: boolean;
+  /** janelas de 5 h já fechadas com gasto, e o mínimo exigido para os percentis */
+  windowsClosed: number;
+  windowsNeeded: number;
+  /** primeiro registro próprio do histórico (ISO) — null sem nenhum */
+  historySince: string | null;
   /** US$ equivalente por 1 ponto percentual — null sem leituras suficientes (< 6 pares) */
   usdPerPctWeek: number | null;
   usdPerPct5h: number | null;
