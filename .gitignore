@@ -1,0 +1,6 @@
+node_modules/
+# estado de execução (dados do usuário, backups de settings, memória, conversas)
+state/*
+!state/config.json
+!state/prices.json
+!state/models.json

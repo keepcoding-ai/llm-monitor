@@ -1,0 +1,21 @@
+{
+  "collectIntervalSec": 15,
+  "soulPools": [
+    {
+      "dir": "~/.soul",
+      "label": "Soul (padrão)",
+      "sessionRoots": [
+        "D:/atrium/.tmp/agents",
+        "D:/atrium/.tmp/agent-switch"
+      ]
+    }
+  ],
+  "pulse": {
+    "enabled": true,
+    "everyMinutes": 60,
+    "model": "haiku",
+    "autoEscalate": false
+  },
+  "chatModel": "haiku",
+  "platformDailyBudgetUSD": 2
+}

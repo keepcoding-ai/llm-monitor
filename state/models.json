@@ -1,0 +1,18 @@
+{
+  "claude": {
+    "models": [
+      "opus",
+      "sonnet",
+      "haiku",
+      "fable",
+      "opusplan"
+    ],
+    "efforts": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  }
+}

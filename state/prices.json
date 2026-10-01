@@ -1,0 +1,70 @@
+{
+  "version": "2026-09-25",
+  "source": "Tabela pública da API Anthropic (cache 2026-09-25). Escrita de cache: 1,25× (5 min) e 2× (1 h) do preço de entrada.",
+  "models": [
+    {
+      "match": "claude-opus-5-5",
+      "input": 4,
+      "output": 20,
+      "cacheWrite5m": 5,
+      "cacheWrite1h": 8,
+      "cacheRead": 0.2
+    },
+    {
+      "match": "claude-opus-5",
+      "input": 5,
+      "output": 25,
+      "cacheWrite5m": 6.25,
+      "cacheWrite1h": 10,
+      "cacheRead": 0.5
+    },
+    {
+      "match": "claude-opus-4",
+      "input": 5,
+      "output": 25,
+      "cacheWrite5m": 6.25,
+      "cacheWrite1h": 10,
+      "cacheRead": 0.5
+    },
+    {
+      "match": "claude-fable-5",
+      "input": 10,
+      "output": 50,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20,
+      "cacheRead": 0.25
+    },
+    {
+      "match": "claude-mythos-5",
+      "input": 10,
+      "output": 50,
+      "cacheWrite5m": 12.5,
+      "cacheWrite1h": 20,
+      "cacheRead": 0.25
+    },
+    {
+      "match": "claude-sonnet-5",
+      "input": 2,
+      "output": 10,
+      "cacheWrite5m": 2.5,
+      "cacheWrite1h": 4,
+      "cacheRead": 0.2
+    },
+    {
+      "match": "claude-sonnet-4",
+      "input": 3,
+      "output": 15,
+      "cacheWrite5m": 3.75,
+      "cacheWrite1h": 6,
+      "cacheRead": 0.3
+    },
+    {
+      "match": "claude-haiku-4",
+      "input": 1,
+      "output": 5,
+      "cacheWrite5m": 1.25,
+      "cacheWrite1h": 2,
+      "cacheRead": 0.1
+    }
+  ]
+}

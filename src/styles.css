@@ -1,0 +1,141 @@
+/* LLM Monitor — app standalone: aqui mora o tema (o host é o próprio app).
+ * Tokens fiéis ao design system do Atrium (neutro frio 222, primary âmbar).
+ * Cor SEMPRE por intenção (--x-*); cor crua só em gráfico. */
+@import "tailwindcss";
+@import "@atrium/core-ui/styles.css";
+@source "../widgets";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  color-scheme: light;
+  --background: oklch(0.97 0.008 222);
+  --foreground: oklch(0.26 0.025 230);
+  --card: oklch(0.995 0.004 222);
+  --card-foreground: oklch(0.26 0.025 230);
+  --popover: oklch(1 0.003 222);
+  --popover-foreground: oklch(0.26 0.025 230);
+  --primary: oklch(0.6 0.14 55);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.94 0.012 222);
+  --secondary-foreground: oklch(0.28 0.025 230);
+  --muted: oklch(0.945 0.01 222);
+  --muted-foreground: oklch(0.5 0.02 230);
+  --accent: oklch(0.92 0.03 55);
+  --accent-foreground: oklch(0.28 0.025 230);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.9 0.012 222);
+  --input: oklch(0.915 0.012 222);
+  --ring: oklch(0.6 0.14 55);
+  --radius: 0.625rem;
+
+  --x-red: oklch(0.62 0.22 25);
+  --x-orange: oklch(0.7 0.19 50);
+  --x-yellow: oklch(0.86 0.17 95);
+  --x-lime: oklch(0.8 0.22 125);
+  --x-green: oklch(0.7 0.2 148);
+  --x-teal: oklch(0.72 0.14 178);
+  --x-cyan: oklch(0.78 0.13 200);
+  --x-sky: oklch(0.7 0.16 230);
+  --x-blue: oklch(0.58 0.22 260);
+  --x-purple: oklch(0.58 0.24 295);
+  --x-magenta: oklch(0.65 0.27 322);
+  --x-pink: oklch(0.68 0.22 355);
+
+  --x-info: var(--x-sky);
+  --x-info-foreground: oklch(0.2 0.03 230);
+  --x-notice: var(--x-blue);
+  --x-notice-foreground: oklch(0.99 0 0);
+  --x-success: var(--x-green);
+  --x-success-foreground: oklch(0.2 0.04 148);
+  --x-warning: var(--x-yellow);
+  --x-warning-foreground: oklch(0.28 0.05 95);
+  --x-alert: var(--x-orange);
+  --x-alert-foreground: oklch(0.24 0.05 50);
+  --x-error: var(--x-red);
+  --x-error-foreground: oklch(0.99 0 0);
+  --x-highlight: var(--x-purple);
+  --x-highlight-foreground: oklch(0.99 0 0);
+  --x-critical: var(--x-magenta);
+  --x-critical-foreground: oklch(0.99 0 0);
+  --x-faint: oklch(0.68 0.012 230);
+  --x-faint-foreground: oklch(0.99 0 0);
+  --x-muted: oklch(0.52 0.02 230);
+  --x-muted-foreground: oklch(0.99 0 0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --background: oklch(0.17 0.022 222);
+    --foreground: oklch(0.92 0.012 222);
+    --card: oklch(0.215 0.028 222);
+    --card-foreground: oklch(0.92 0.012 222);
+    --popover: oklch(0.235 0.03 222);
+    --popover-foreground: oklch(0.94 0.01 222);
+    --primary: oklch(0.76 0.155 62);
+    --primary-foreground: oklch(0.18 0.04 60);
+    --secondary: oklch(0.255 0.03 222);
+    --secondary-foreground: oklch(0.92 0.012 222);
+    --muted: oklch(0.245 0.026 222);
+    --muted-foreground: oklch(0.68 0.022 222);
+    --accent: oklch(0.32 0.05 62);
+    --accent-foreground: oklch(0.94 0.01 222);
+    --destructive: oklch(0.6 0.18 25);
+    --border: oklch(0.32 0.022 222);
+    --input: oklch(0.27 0.022 222);
+    --ring: oklch(0.76 0.155 62);
+    --x-success-foreground: oklch(0.16 0.04 148);
+    --x-alert-foreground: oklch(0.22 0.05 50);
+    --x-faint: oklch(0.5 0.014 230);
+    --x-muted: oklch(0.62 0.02 230);
+  }
+}
+
+@theme inline {
+  --color-x-red: var(--x-red);
+  --color-x-orange: var(--x-orange);
+  --color-x-yellow: var(--x-yellow);
+  --color-x-lime: var(--x-lime);
+  --color-x-green: var(--x-green);
+  --color-x-teal: var(--x-teal);
+  --color-x-cyan: var(--x-cyan);
+  --color-x-sky: var(--x-sky);
+  --color-x-blue: var(--x-blue);
+  --color-x-purple: var(--x-purple);
+  --color-x-magenta: var(--x-magenta);
+  --color-x-pink: var(--x-pink);
+  --color-x-info: var(--x-info);
+  --color-x-info-foreground: var(--x-info-foreground);
+  --color-x-notice: var(--x-notice);
+  --color-x-notice-foreground: var(--x-notice-foreground);
+  --color-x-success: var(--x-success);
+  --color-x-success-foreground: var(--x-success-foreground);
+  --color-x-warning: var(--x-warning);
+  --color-x-warning-foreground: var(--x-warning-foreground);
+  --color-x-alert: var(--x-alert);
+  --color-x-alert-foreground: var(--x-alert-foreground);
+  --color-x-error: var(--x-error);
+  --color-x-error-foreground: var(--x-error-foreground);
+  --color-x-highlight: var(--x-highlight);
+  --color-x-critical: var(--x-critical);
+  --color-x-faint: var(--x-faint);
+  --color-x-muted: var(--x-muted);
+}
+
+/* 4º tier: TV / telas muito largas */
+@theme {
+  --breakpoint-tv: 120rem;
+}
+
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+* { border-color: var(--border); }
+.tabular { font-variant-numeric: tabular-nums; }
