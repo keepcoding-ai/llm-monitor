@@ -252,20 +252,20 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
       <InputGroup
         data-testid="chat-composer"
         data-multiline={multi}
-        className={`rounded-3xl bg-background dark:bg-background ${drag ? "ring-2 ring-ring" : ""}`}
+        className={`bg-background p-1.5 dark:bg-background ${multi ? "rounded-[28px] md:rounded-[24px]" : "rounded-full"} ${drag ? "ring-2 ring-ring" : ""}`}
         onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDrag(true); } }}
         onDragLeave={() => setDrag(false)}
         onDrop={(e) => { setDrag(false); if (e.dataTransfer.files.length) { e.preventDefault(); void addFiles([...e.dataTransfer.files]); } }}
       >
         <input ref={picker} type="file" accept={ACCEPT} multiple hidden onChange={(e) => { void addFiles([...(e.target.files ?? [])]); e.target.value = ""; }} />
-        {!multi && <InputGroupAddon key="clip" align="inline-start" className="pl-1.5">{attachBtn}</InputGroupAddon>}
+        {!multi && <InputGroupAddon key="clip" align="inline-start" className="m-0 p-0 has-[>button]:m-0">{attachBtn}</InputGroupAddon>}
         <InputGroupTextarea
           key="field"
           ref={field}
           value={s.draft}
           rows={1}
           disabled={!connected}
-          className={`field-sizing-fixed min-h-0 min-w-0 px-3 py-2.5 text-base md:text-sm ${multi ? "flex-none" : ""}`}
+          className={`field-sizing-fixed min-h-0 min-w-0 px-3 text-base md:text-sm ${multi ? "flex-none py-2.5" : "py-0"}`}
           placeholder={connected ? "Pergunte ao monitor" : "Sem conexão com o monitor — o chat volta quando reconectar"}
           onChange={(e) => set({ draft: e.target.value })}
           onPaste={(e) => {
@@ -280,9 +280,9 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
           }}
         />
         {multi ? (
-          <InputGroupAddon key="bar" align="block-end" className="justify-between px-1.5 pb-1.5">{attachBtn}{sendBtn}</InputGroupAddon>
+          <InputGroupAddon key="bar" align="block-end" className="m-0 justify-between p-0 group-has-[>input]/input-group:pb-0 has-[>button]:m-0">{attachBtn}{sendBtn}</InputGroupAddon>
         ) : (
-          <InputGroupAddon key="send" align="inline-end" className="pr-1.5">{sendBtn}</InputGroupAddon>
+          <InputGroupAddon key="send" align="inline-end" className="m-0 p-0 has-[>button]:m-0">{sendBtn}</InputGroupAddon>
         )}
       </InputGroup>
       <p className="text-xs text-muted-foreground" data-testid="chat-price">
