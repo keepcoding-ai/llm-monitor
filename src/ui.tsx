@@ -109,3 +109,15 @@ export function RankList({ rows, color }: { rows: { key: string; label: string; 
     </ul>
   );
 }
+
+/** Símbolo da marca (brand/llm-monitor/{light,dark}/logo.svg, derivado em public/brand/). Troca com o tema
+ *  escolhido (.dark no <html>), não com a media query — a agulha é preta no claro e branca no escuro. */
+export function BrandSymbol({ className = "size-6" }: { className?: string }) {
+  const base = import.meta.env.BASE_URL;
+  return (
+    <span className={`inline-flex shrink-0 ${className}`} aria-hidden="true">
+      <img src={`${base}brand/logo-light.svg`} alt="" className="size-full dark:hidden" draggable={false} />
+      <img src={`${base}brand/logo-dark.svg`} alt="" className="hidden size-full dark:block" draggable={false} />
+    </span>
+  );
+}

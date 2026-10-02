@@ -19,6 +19,8 @@ import { VerdictBlock, useTick } from "./verdict";
 import { ChatPanel, NewChatButton } from "./chat";
 import { CabeBlock } from "./cabe";
 import { VerdictNotifier } from "./notify";
+import { PwaNotices } from "./pwa";
+import { BrandSymbol } from "./ui";
 import { AjustesPage } from "./pages/ajustes";
 import { PAGES, fixLegacyRoute, go, pageHref, pref, setHash, setPref, useHash, useMedia, usePage, useTier, type Page } from "./router";
 import type { PageId, SlotSpec, WidgetVersion } from "../shared/snapshot";
@@ -229,9 +231,10 @@ function HomeMark({ className = "" }: { className?: string }) {
         e.preventDefault();
         go("agora");
       }}
-      className={`inline-flex min-h-11 items-center rounded-md text-lg font-semibold tracking-tight outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring xl:min-h-0 ${className}`}
+      className={`inline-flex min-h-11 items-center gap-2 rounded-md text-lg font-semibold tracking-tight outline-none hover:text-primary focus-visible:ring-2 focus-visible:ring-ring xl:min-h-0 ${className}`}
       aria-label="LLM Monitor — ir para Agora"
     >
+      <BrandSymbol className="size-7 tv:size-9" />
       <h1>LLM Monitor</h1>
     </a>
   );
@@ -592,6 +595,7 @@ export function App() {
             </div>
           </header>
 
+          <PwaNotices />
           {collectorError && (
             <ErrorNotice variant="load" className="mb-4">
               <ErrorNoticeMessage>O coletor falhou no último ciclo: {collectorError}</ErrorNoticeMessage>

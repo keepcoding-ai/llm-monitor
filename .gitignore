@@ -4,3 +4,5 @@ state/*
 !state/config.json
 !state/prices.json
 !state/models.json
+dev-dist/
+dist/

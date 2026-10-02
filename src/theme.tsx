@@ -7,6 +7,7 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { CircleHalf, Moon, Sun } from "@phosphor-icons/react";
 import { ToggleGroup, ToggleGroupItem } from "@atrium/core-ui";
+import brand from "../brand.generated.json";
 
 export type ThemeMode = "light" | "auto" | "dark";
 export const THEME_KEY = "pos:state:anon:standalone:theme-mode";
@@ -61,6 +62,9 @@ export function ThemeRoot() {
     const el = document.documentElement;
     el.classList.toggle("dark", dark);
     el.style.colorScheme = dark ? "dark" : "light";
+    // barra de status/título do PWA acompanha o tema ESCOLHIDO (a media query só enxerga o sistema)
+    const c = dark ? brand.background.dark : brand.background.light;
+    document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute("content", c));
   }, [dark]);
   return null;
 }

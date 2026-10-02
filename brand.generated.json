@@ -1,0 +1,8 @@
+{
+  "name": "LLM Monitor",
+  "shortName": "LLM Monitor",
+  "background": {
+    "light": "#f0f6f9",
+    "dark": "#051216"
+  }
+}
