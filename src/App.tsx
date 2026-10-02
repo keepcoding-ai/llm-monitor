@@ -16,7 +16,7 @@ import { ThemeRoot } from "./theme";
 import { ago, call, connect, useLayout, useLive, useSnapshot } from "./sdk";
 import { SlotBoundary, TestHarness, useWidget } from "./runtime";
 import { VerdictBlock, useTick } from "./verdict";
-import { ChatPanel } from "./chat";
+import { ChatPanel, NewChatButton } from "./chat";
 import { CabeBlock } from "./cabe";
 import { VerdictNotifier } from "./notify";
 import { AjustesPage } from "./pages/ajustes";
@@ -367,14 +367,17 @@ function chatContext(page: Page, s: ReturnType<typeof useSnapshot>) {
 
 function ChatHeaderActions({ onClose }: { onClose: () => void }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-9" aria-label="Fechar o chat" onClick={onClose}>
-          <X />
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>Fechar</TooltipContent>
-    </Tooltip>
+    <div className="flex items-center gap-1">
+      <NewChatButton />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-9" aria-label="Fechar o chat" onClick={onClose}>
+            <X />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Fechar</TooltipContent>
+      </Tooltip>
+    </div>
   );
 }
 
@@ -393,7 +396,7 @@ function ChatSidePanel({ tier, onClose }: { tier: "desktop" | "tv"; onClose: () 
       exit={{ opacity: 0, x: 24 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
       style={{ width: w }}
-      className="sticky top-0 hidden h-dvh shrink-0 flex-col border-l bg-card xl:flex"
+      className="sticky top-3 my-3 mr-3 hidden h-[calc(100dvh-1.5rem)] shrink-0 flex-col rounded-2xl border bg-card shadow-lg xl:flex"
       aria-label="Chat"
     >
       <div

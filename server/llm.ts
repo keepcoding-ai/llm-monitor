@@ -203,7 +203,9 @@ export async function escalate(rec: PulseRecord): Promise<NonNullable<PulseRecor
 
 // ------------------------------------------------------------ chat
 
-export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string };
+export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: ChatAttachment[] };
+export type ChatAttachment = { name: string; type: string; file: string };
+export type ChatUpload = { name: string; type: string; data: string };
 let chatBusy = false;
 let stopChat: (() => void) | null = null;
 let chatStopped = false;
@@ -220,10 +222,30 @@ export function chatHistory(): ChatMsg[] {
   return readJsonl<ChatMsg>(P.chat).slice(-200);
 }
 
-export async function chat(message: string, context?: string): Promise<void> {
+export const UPLOADS = join(AGENT_WORK, "uploads");
+const MAX_UPLOAD = 8 * 1024 * 1024;
+
+/** Anexos do chat: gravados em state/agent-work/uploads (cwd do agente) e lidos por ele com a
+ *  ferramenta Read, que entende imagem e PDF. O nome no disco é gerado aqui, nunca o do cliente. */
+function saveUploads(files: ChatUpload[] = []): ChatAttachment[] {
+  mkdirSync(UPLOADS, { recursive: true });
+  return files.slice(0, 6).map((f) => {
+    const buf = Buffer.from(String(f.data ?? ""), "base64");
+    if (!buf.length) throw new Error(`anexo vazio: ${f.name}`);
+    if (buf.length > MAX_UPLOAD) throw new Error(`anexo grande demais (máx. 8 MB): ${f.name}`);
+    const raw = String(f.name).match(/\.([A-Za-z0-9]{1,8})$/)?.[1] ?? String(f.type).split("/")[1] ?? "bin";
+    const ext = raw.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toLowerCase() || "bin";
+    const file = `${crypto.randomUUID()}.${ext}`;
+    writeFileSync(join(UPLOADS, file), buf);
+    return { name: String(f.name).slice(0, 120), type: String(f.type).slice(0, 80), file };
+  });
+}
+
+export async function chat(message: string, context?: string, uploads?: ChatUpload[]): Promise<void> {
   if (chatBusy) throw new Error("o chat ainda está respondendo");
+  const attachments = saveUploads(uploads);
   const blocked = budgetGuard();
-  const userMsg: ChatMsg = { id: crypto.randomUUID(), role: "user", text: message, at: new Date().toISOString() };
+  const userMsg: ChatMsg = { id: crypto.randomUUID(), role: "user", text: message, at: new Date().toISOString(), ...(attachments.length ? { attachments } : {}) };
   appendJsonl(P.chat, [userMsg]);
   publish("chat", { type: "message", message: userMsg });
   const id = crypto.randomUUID();
@@ -245,13 +267,14 @@ export async function chat(message: string, context?: string): Promise<void> {
     JSON.stringify(compactSummary(buildSnapshot())),
     ...(context?.trim() ? [`Contexto da tela que o dono está vendo agora (use para entender a pergunta; não repita): ${context.trim()}`] : []),
   ].join("\n");
-  const args = ["--model", cfg.chatModel, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Read,Grep,Glob", "--add-dir", APP_ROOT, "--append-system-prompt", system];
+  const args = ["--model", cfg.chatModel, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Read,Grep,Glob", "--add-dir", APP_ROOT, "--add-dir", UPLOADS, "--append-system-prompt", system];
   if (sess.sessionId) args.push("--resume", sess.sessionId);
   publish("chat", { type: "start", id });
   let text = "";
   chatStopped = false;
   try {
-    const res = await runClaude(args, message, (ev) => {
+    const prompt = attachments.length ? `${message}\n\n[Anexos do dono; use a ferramenta Read para vê-los]\n${attachments.map((a) => `- ${a.name}: ${join(UPLOADS, a.file)}`).join("\n")}` : message;
+    const res = await runClaude(args, prompt, (ev) => {
       if (ev.type === "stream_event" && ev.event?.type === "content_block_delta" && ev.event.delta?.type === "text_delta") {
         text += ev.event.delta.text;
         publish("chat", { type: "delta", id, text: ev.event.delta.text });

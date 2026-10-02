@@ -12,7 +12,7 @@ export type ChatEvent =
   | { type: "start"; id: string }
   | { type: "delta"; id: string; text: string }
   | { type: "error"; error: string };
-export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string };
+export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: { name: string; type: string; file: string }[] };
 
 type State = {
   snapshot: Snapshot | null;

@@ -8,6 +8,7 @@ const D = 24 * H;
 
 export type Reading = { at: string; session?: string | null; five?: { usedPct: number; resetsAt: string | null }; seven?: { usedPct: number; resetsAt: string | null } };
 export type FableManual = { pct: number; at: string; resetsAt: string | null };
+export type FableOfficial = { pct: number; resetsAt: string | null; at: string };
 export type FableUsage = { tokens: number; cost: number; since: string } | null;
 
 // ------------------------------------------------------------ hora humana
@@ -108,6 +109,8 @@ export type VerdictInput = {
   history: Reading[];
   staleAfterMs?: number;
   fableManual?: FableManual | null;
+  /** % oficial do Fable vindo de /api/oauth/usage (tem precedência sobre o manual) */
+  fableOfficial?: FableOfficial | null;
   fableUsage?: FableUsage;
   lastUsageAt?: number | null;
 };
@@ -254,8 +257,14 @@ export function computeVerdict(inp: VerdictInput): Verdict {
 
   // Fable na semana
   const fm = inp.fableManual;
-  const fableResets = latest.seven?.resetsAt ?? fm?.resetsAt ?? null;
-  if (fm && (!fm.resetsAt || Date.parse(fm.resetsAt) > now)) {
+  const fo = inp.fableOfficial;
+  const fableResets = latest.seven?.resetsAt ?? fo?.resetsAt ?? fm?.resetsAt ?? null;
+  if (fo && (!fo.resetsAt || Date.parse(fo.resetsAt) > now)) {
+    const ws = fo.resetsAt ? Date.parse(fo.resetsAt) - 7 * D : weekStart;
+    const hoursSince = ws != null ? (now - ws) / H : null;
+    const avg = hoursSince && hoursSince > 0 ? fo.pct / hoursSince : null;
+    windows.push(project("fable-7d", fo.pct, fo.resetsAt ?? fableResets, avg, now, { source: "official", rateAvgPctPerHour: avg, ...fableNote(inp.fableUsage, now) }));
+  } else if (fm && (!fm.resetsAt || Date.parse(fm.resetsAt) > now)) {
     const ws = fm.resetsAt ? Date.parse(fm.resetsAt) - 7 * D : weekStart;
     const hoursSince = ws != null ? (now - ws) / H : null;
     const avg = hoursSince && hoursSince > 0 ? fm.pct / hoursSince : null;
@@ -329,6 +338,8 @@ export function computeVerdict(inp: VerdictInput): Verdict {
 }
 
 function fableOnly(inp: VerdictInput): VerdictWindow[] {
+  const fo = inp.fableOfficial;
+  if (fo && (!fo.resetsAt || Date.parse(fo.resetsAt) > inp.now)) return [{ ...project("fable-7d", fo.pct, fo.resetsAt, null, inp.now), source: "official", ...fableNote(inp.fableUsage, inp.now) }];
   if (!inp.fableUsage || inp.fableUsage.tokens <= 0) return [];
   return [{ ...project("fable-7d", null, null, null, inp.now), source: "none", ...fableNote(inp.fableUsage, inp.now) }];
 }

@@ -259,6 +259,8 @@ function FableManual() {
   if (!s) return null;
   const fw = s.verdict.windows.find((w) => w.id === "fable-7d");
   const manual = fw?.source === "manual" ? fw : null;
+  // O % oficial vem sozinho de /api/oauth/usage; este registro à mão só é fallback quando ele não chega.
+  if (fw?.source === "official") return null;
   const save = async (pct: number | null) => {
     setMsg(null);
     try {
@@ -270,7 +272,7 @@ function FableManual() {
     }
   };
   return (
-    <Section title="Fable no /usage" desc="A linha de status não traz o limite por modelo. Se quiser a terceira barra com %, copie aqui o que o /usage do Claude Code mostra para o Fable. Vale até a renovação da semana.">
+    <Section title="Fable no /usage (fallback)" desc="O % oficial não chegou sozinho de /api/oauth/usage. Se quiser a terceira barra com %, copie aqui o que o /usage do Claude Code mostra para o Fable. Vale até a renovação da semana.">
       {manual && (
         <p className="text-sm">
           <span className="tabular font-medium">{Math.round(manual.usedPct ?? 0)} %</span> informado por você {manual.manualAt ? ago(manual.manualAt) : ""} · vale até {manual.resetHuman}

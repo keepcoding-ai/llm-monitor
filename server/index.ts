@@ -9,11 +9,12 @@ import { loadSeries, records } from "./series.ts";
 import { collectClaude, meta } from "./collector/claude.ts";
 import { collectSoul, activateSoulAccount } from "./collector/soul.ts";
 import { saveOffsets } from "./collector/incremental.ts";
+import { getOfficialUsage } from "./oauth-usage.ts";
 import { buildSnapshot, setPulseState, statuslineMtime } from "./derive.ts";
 import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
 import { writeClaudeDefaults, settingsPath, readClaudeSettings } from "./control.ts";
-import { chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun } from "./llm.ts";
+import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun } from "./llm.ts";
 import { loadLayout, pendingTestList, proposeWidget, reportTest, restoreWidget, undoWidget } from "./widgets.ts";
 import type { Snapshot } from "../shared/snapshot.ts";
 
@@ -35,6 +36,7 @@ async function cycle() {
   try {
     const a = await collectClaude((n) => publish("progress", { files: n, records: records.length }));
     const b = await collectSoul();
+    await getOfficialUsage(); // cache de 60 s; nunca lança
     revertTempDefault();
     saveOffsets();
     collectorError = null;
@@ -58,6 +60,17 @@ function scheduleCycle() {
     scheduleCycle();
   }, loadConfig().collectIntervalSec * 1000);
 }
+
+// uso oficial do plano: atualiza a cada ~60 s e republica só se mudou
+let lastOfficial = "";
+setInterval(async () => {
+  const u = await getOfficialUsage();
+  const sig = JSON.stringify([u.state, u.five, u.seven, u.fable]);
+  if (sig === lastOfficial) return;
+  lastOfficial = sig;
+  snapshot = buildSnapshot();
+  publish("snapshot", snapshot);
+}, 60_000);
 
 // statusline grava em disco; reflete na hora sem esperar o ciclo
 let slMtime = statuslineMtime();
@@ -272,10 +285,16 @@ api.post("/proposals/:file/apply-widget", async (c) => {
 api.get("/chat", (c) => c.json(chatHistory()));
 api.post("/chat", async (c) => {
   // `context` (tela atual) entra no system do chat (texto aprovado em docs/minuta-chat-contexto.md).
-  const { message, context } = (await c.req.json()) as { message: string; context?: string };
-  if (!message?.trim()) return c.json({ error: "mensagem vazia" }, 400);
-  chat(message.trim(), context).catch((e) => publish("chat", { type: "error", error: (e as Error).message }));
+  const { message, context, attachments } = (await c.req.json()) as { message: string; context?: string; attachments?: ChatUpload[] };
+  if (!message?.trim() && !attachments?.length) return c.json({ error: "mensagem vazia" }, 400);
+  chat(message?.trim() || "(sem texto; veja o anexo)", context, attachments).catch((e) => publish("chat", { type: "error", error: (e as Error).message }));
   return c.json({ accepted: true }, 202);
+});
+api.get("/chat/files/:f", (c) => {
+  const f = c.req.param("f");
+  if (!/^[\w-]+\.[A-Za-z0-9]+$/.test(f) || !existsSync(join(UPLOADS, f))) return c.json({ error: "não encontrado" }, 404);
+  const types: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf" };
+  return new Response(readFileSync(join(UPLOADS, f)), { headers: { "content-type": types[f.split(".").pop()!] ?? "application/octet-stream", "x-content-type-options": "nosniff", "content-security-policy": "sandbox" } });
 });
 api.post("/chat/stop", (c) => c.json({ stopped: stopChatRun() }));
 // Ajustes → Linha de status → "como ativar": o único lugar da UI que mostra o comando (dono é dev)

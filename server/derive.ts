@@ -8,6 +8,7 @@ import { soulPools, soulVocabulary } from "./collector/soul.ts";
 import { readClaudeSettings } from "./control.ts";
 import { buildCabe, checkEstimates, fiveHourWindows } from "./cabe.ts";
 import type { Cabe } from "../shared/cabe.ts";
+import { peekOfficialUsage } from "./oauth-usage.ts";
 import { computeVerdict, humanTime, otherAccounts, sameReset, type FableManual, type Reading } from "./verdict.ts";
 import type { Verdict, Autonomy, Bucket, Limits, LimitWindow, Named, PulseRecord, Snapshot, Suggestion } from "../shared/snapshot.ts";
 
@@ -141,6 +142,10 @@ export function buildVerdict(now: number, lastUsageAt: number | null, history: R
     const s = readJson<StatuslineSnap & { session?: string }>(P.statusline, { at: "", keys: [], rateLimits: null });
     if (s.at) latest = { at: s.at, session: s.session ?? null, five: toWin(s.rateLimits?.five_hour), seven: toWin(s.rateLimits?.seven_day) };
   }
+  // uso oficial (/api/oauth/usage): cobre a leitura quando a linha de status faltou ou está velha
+  const off = peekOfficialUsage();
+  if (off?.state === "ok" && (off.five || off.seven) && (!latest || now - Date.parse(latest.at) > 15 * 60_000) && Date.parse(off.at) > (latest ? Date.parse(latest.at) : 0))
+    latest = { at: off.at, session: null, five: off.five, seven: off.seven };
   const weekStart = latest?.seven?.resetsAt ? Date.parse(latest.seven.resetsAt) - 7 * D : now - 7 * D;
   const fable = since(weekStart).filter((r) => r.source === "claude-code" && family(r.model) === "fable");
   const fableUsage = fable.length ? { tokens: fable.reduce((x, r) => x + r.input + r.output + r.cacheWrite + r.cacheRead, 0), cost: fable.reduce((x, r) => x + (r.cost ?? 0), 0), since: new Date(weekStart).toISOString() } : null;
@@ -150,7 +155,7 @@ export function buildVerdict(now: number, lastUsageAt: number | null, history: R
     raiseFlag({ key: "outra-conta", kind: "dado-divergente", level: "warning", title: "Outra conta do Claude aberta — o veredito segue a mais recente", detail: `Há sessões do Claude Code com limites de renovação diferentes, então são contas diferentes. Conta mais recente: ${pct(acc.active)}. Outra: ${pct(acc.other)}. O veredito segue a conta mais recente.` });
   } else clearFlag("outra-conta");
   clearFlag("sessoes-divergentes"); // aviso antigo: divergência entre sessões da mesma conta era atraso, não outra conta
-  return computeVerdict({ now, latest, history, fableManual: readFableManual(), fableUsage, lastUsageAt });
+  return computeVerdict({ now, latest, history, fableManual: readFableManual(), fableOfficial: off?.state === "ok" && off.fable ? { pct: off.fable.usedPct, resetsAt: off.fable.resetsAt, at: off.at } : null, fableUsage, lastUsageAt });
 }
 
 // ------------------------------------------------------------ semana (plano G5)

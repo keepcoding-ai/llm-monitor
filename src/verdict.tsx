@@ -34,9 +34,10 @@ function WindowBar({ w, decisive, size }: { w: VerdictWindow; decisive: boolean;
   const color = v == null ? "" : v >= 90 ? "bg-x-error" : v >= 70 ? "bg-x-alert" : "bg-x-success";
   const sub: string[] = [];
   if (w.id === "fable-7d") {
+    if (w.source === "official") sub.push(`renova ${w.resetHuman}`);
     if (w.fableTokens != null) sub.push(`${tokens(w.fableTokens)} tokens · ${usd(w.fableCost ?? 0, 0)} desde ${w.fableSinceHuman}`);
     if (w.source === "manual" && w.manualAt) sub.push(`informado por você ${ago(w.manualAt)} · renova ${w.resetHuman}`);
-    else sub.push("% oficial só no /usage do Claude Code");
+    else if (w.source !== "official") sub.push("% oficial indisponível — informe em Ajustes");
   } else if (w.usedPct == null) {
     sub.push(w.note ?? "sem leitura");
   } else {

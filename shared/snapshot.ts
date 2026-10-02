@@ -20,7 +20,7 @@ export type VerdictWindow = {
   id: "5h" | "7d" | "fable-7d"; label: string; usedPct: number | null; resetsAt: string | null;
   resetHuman: string; ratePctPerHour: number | null; rateAvgPctPerHour?: number | null; rateRecentPctPerHour?: number | null;
   hitsAt: string | null; hitsHuman: string | null; exhausts: boolean; projAtReset: number | null;
-  source: "statusline" | "manual" | "none"; note?: string;
+  source: "statusline" | "manual" | "official" | "none"; note?: string;
   /** Fable: uso real da semana (tokens/US$ equivalente) e quando o % foi informado à mão */
   fableTokens?: number; fableCost?: number; fableSince?: string; fableSinceHuman?: string; manualAt?: string;
 };
