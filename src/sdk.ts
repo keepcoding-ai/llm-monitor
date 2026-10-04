@@ -21,9 +21,18 @@ type State = {
   progress: { files: number; records: number } | null;
   collectorError: string | null;
   pulseRunning: boolean;
+  /** Estado do canal com o serviço: ao vivo, soluço recente (até ~10 s) ou fora do ar. */
+  link: Link;
+  /** Momento (ms) do último evento recebido do serviço — qualquer evento, inclusive ping. */
+  lastEventAt: number | null;
+  /** Momento (ms) em que o canal caiu; null quando ao vivo. */
+  downSince: number | null;
 };
+export type Link = "live" | "reconnecting" | "down";
+/** Tempo de soluço tolerado antes de declarar o serviço fora do ar. */
+const GRACE_MS = 10_000;
 
-let state: State = { snapshot: null, layout: null, connected: false, progress: null, collectorError: null, pulseRunning: false };
+let state: State = { snapshot: null, layout: null, connected: false, progress: null, collectorError: null, pulseRunning: false, link: "reconnecting", lastEventAt: null, downSince: null };
 const subs = new Set<() => void>();
 function set(p: Partial<State>) {
   state = { ...state, ...p };
@@ -47,39 +56,93 @@ export function onWidgetTest(f: (t: { widget: string; v: number }) => void) {
 
 let es: EventSource | null = null;
 let lastEvent = Date.now();
+let everConnected = false;
+let graceTimer: ReturnType<typeof setTimeout> | null = null;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function touch() {
+  lastEvent = Date.now();
+  if (state.link !== "live") return markLive();
+  state.lastEventAt = lastEvent; // sem notificar: o "há Xs" vem do tick, não de cada ping
+}
+function markLive() {
+  everConnected = true;
+  if (graceTimer) clearTimeout(graceTimer), (graceTimer = null);
+  set({ connected: true, link: "live", downSince: null, lastEventAt: Date.now() });
+}
+/** Perdeu o canal: soluço por até GRACE_MS, depois "fora do ar". Sem nunca ter conectado, já é "fora do ar". */
+function markLost() {
+  if (state.link === "down") return;
+  if (!everConnected) return set({ connected: false, link: "down", downSince: state.downSince ?? Date.now() });
+  if (state.link === "reconnecting" && graceTimer) return;
+  set({ connected: false, link: "reconnecting", downSince: Date.now() });
+  graceTimer = setTimeout(() => {
+    graceTimer = null;
+    if (state.link !== "live") set({ link: "down" });
+  }, GRACE_MS);
+}
+function drop() {
+  if (retryTimer) clearTimeout(retryTimer), (retryTimer = null);
+  if (es) es.close();
+  es = null;
+}
+
 // Vigia: o servidor manda ping a cada 25 s. Um proxy pode manter o canal aberto
 // depois que o backend caiu, sem erro; sem nenhum evento em 40 s, reconecta.
 setInterval(() => {
   if (es && Date.now() - lastEvent > 40_000) {
-    es.close();
-    es = null;
-    set({ connected: false });
+    drop();
+    markLost();
     connect();
   }
 }, 5_000);
+
+/** Abre o canal SSE. Idempotente: nunca cria dois EventSource. */
 export function connect() {
   if (es) return;
   lastEvent = Date.now();
-  es = new EventSource(`${API}/events`);
-  es.onopen = () => set({ connected: true });
-  es.onerror = () => set({ connected: false });
-  es.addEventListener("ping", () => (lastEvent = Date.now()));
-  es.onmessage = () => (lastEvent = Date.now());
-  for (const ev of ["snapshot", "layout", "progress", "pulse", "chat", "widget-test", "collector-error", "proposals"]) es.addEventListener(ev, () => (lastEvent = Date.now()));
-  es.addEventListener("snapshot", (e) => set({ snapshot: JSON.parse((e as MessageEvent).data), collectorError: null }));
-  es.addEventListener("layout", (e) => set({ layout: JSON.parse((e as MessageEvent).data) }));
-  es.addEventListener("progress", (e) => set({ progress: JSON.parse((e as MessageEvent).data) }));
-  es.addEventListener("collector-error", (e) => set({ collectorError: JSON.parse((e as MessageEvent).data).error }));
-  es.addEventListener("pulse", (e) => set({ pulseRunning: JSON.parse((e as MessageEvent).data).running }));
-  es.addEventListener("chat", (e) => {
+  const src = new EventSource(`${API}/events`);
+  es = src;
+  src.onopen = () => es === src && markLive();
+  src.onerror = () => {
+    if (es !== src) return;
+    markLost();
+    // 502/404 do proxy fecham o EventSource de vez (sem auto-retry): reabrimos nós.
+    if (src.readyState === EventSource.CLOSED && !retryTimer) {
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        if (es === src) (es = null), connect();
+      }, 5_000);
+    }
+  };
+  src.addEventListener("ping", touch);
+  src.onmessage = touch;
+  for (const ev of ["snapshot", "layout", "progress", "pulse", "chat", "widget-test", "collector-error", "proposals"]) src.addEventListener(ev, touch);
+  src.addEventListener("snapshot", (e) => set({ snapshot: JSON.parse((e as MessageEvent).data), collectorError: null }));
+  src.addEventListener("layout", (e) => set({ layout: JSON.parse((e as MessageEvent).data) }));
+  src.addEventListener("progress", (e) => set({ progress: JSON.parse((e as MessageEvent).data) }));
+  src.addEventListener("collector-error", (e) => set({ collectorError: JSON.parse((e as MessageEvent).data).error }));
+  src.addEventListener("pulse", (e) => set({ pulseRunning: JSON.parse((e as MessageEvent).data).running }));
+  src.addEventListener("chat", (e) => {
     const ev = JSON.parse((e as MessageEvent).data) as ChatEvent;
     chatSubs.forEach((f) => f(ev));
   });
-  es.addEventListener("widget-test", (e) => {
+  src.addEventListener("widget-test", (e) => {
     const t = JSON.parse((e as MessageEvent).data);
     testSubs.forEach((f) => f(t));
   });
 }
+
+/** "Tentar agora": fecha o canal atual e reabre na hora. */
+export function reconnectNow() {
+  drop();
+  connect();
+}
+
+/** Estado do vínculo com o serviço + se o que está em tela é leitura antiga. */
+export const useLink = () => useLive((s) => s.link);
+export const useDownSince = () => useLive((s) => s.downSince);
+export const useStale = () => useLive((s) => s.link !== "live" && s.snapshot != null);
 
 export function useLive<T>(pick: (s: State) => T): T {
   return useSyncExternalStore(subscribe, () => pick(state));

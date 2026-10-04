@@ -168,3 +168,16 @@ body {
   border-radius: 9999px;
 }
 *::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklab, var(--muted-foreground) 70%, transparent); }
+
+/* Estado "fora do ar": a última leitura continua legível, mas impossível de
+ * confundir com dado vivo. Só o painel (não cabeçalho nem a faixa de aviso). */
+.stale-fade {
+  transition: filter 400ms ease-out, opacity 400ms ease-out;
+}
+.stale-fade[data-stale] {
+  opacity: 0.55;
+  filter: grayscale(0.6);
+}
+@media (prefers-reduced-motion: reduce) {
+  .stale-fade { transition: none; }
+}

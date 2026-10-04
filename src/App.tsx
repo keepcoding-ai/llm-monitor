@@ -9,11 +9,12 @@ import {
   Badge, Button, Card, CardContent, CardHeader, CardTitle,
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
-  ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Skeleton, Spinner, StatusDot, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider,
+  ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Skeleton, Spinner, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider,
 } from "@atrium/core-ui";
 import { CalendarBlank, ChatCircleText, ClockCounterClockwise, GearSix, House, Lifebuoy, Warning, X } from "@phosphor-icons/react";
 import { ThemeRoot } from "./theme";
-import { ago, call, connect, useLayout, useLive, useSnapshot } from "./sdk";
+import { ago, call, connect, useLayout, useLink, useLive, useSnapshot } from "./sdk";
+import { LinkDot, LinkStatus, ServiceDownNotice, useDownTitle } from "./link";
 import { SlotBoundary, TestHarness, useWidget } from "./runtime";
 import { VerdictBlock, useTick } from "./verdict";
 import { ChatPanel, NewChatButton } from "./chat";
@@ -210,18 +211,6 @@ function VersionsDetour() {
 }
 
 // ------------------------------------------------------------ cabeçalho e navegação
-
-function LiveStatus() {
-  const connected = useLive((s) => s.connected);
-  const snap = useSnapshot();
-  useTick();
-  return (
-    <span className="flex items-center gap-2 text-sm text-muted-foreground">
-      <StatusDot status={connected ? "running" : "attention"} label={connected ? "Ao vivo" : "Sem conexão"} />
-      <span className="truncate">{connected ? (snap ? `ao vivo · ${ago(snap.at)}` : "conectando…") : "sem conexão"}</span>
-    </span>
-  );
-}
 
 function HomeMark({ className = "" }: { className?: string }) {
   return (
@@ -550,7 +539,10 @@ export function App() {
   const snap = useSnapshot();
   const progress = useLive((s) => s.progress);
   const collectorError = useLive((s) => s.collectorError);
-  const connected = useLive((s) => s.connected);
+  const link = useLink();
+  // fora do ar: escurece a última leitura (e os esqueletos, que não estão carregando nada)
+  const stale = link === "down";
+  useDownTitle();
   const page = usePage();
   const tier = useTier();
   const wide = tier === "desktop" || tier === "tv";
@@ -583,30 +575,33 @@ export function App() {
             <div className="flex min-w-0 items-center gap-3">
               <HomeMark className="xl:hidden" />
               <span className="hidden md:inline-flex xl:inline-flex">
-                <LiveStatus />
+                <LinkStatus />
               </span>
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               <span className="md:hidden">
-                <StatusDot status={connected ? "running" : "attention"} label={connected ? "Ao vivo" : "Sem conexão"} />
+                <LinkDot />
               </span>
               <AlertsButton />
               <ChatButton open={chatOpen} onToggle={() => setChatOpen(!chatOpen)} />
             </div>
           </header>
 
+          <ServiceDownNotice />
           <PwaNotices />
           {collectorError && (
             <ErrorNotice variant="load" className="mb-4">
               <ErrorNoticeMessage>O coletor falhou no último ciclo: {collectorError}</ErrorNoticeMessage>
             </ErrorNotice>
           )}
-          {!snap && (
+          {!snap && link === "live" && (
             <div className="mb-4 flex items-center gap-2 text-sm text-muted-foreground">
               <Spinner /> Primeira leitura do histórico{progress ? ` — ${progress.files} arquivos, ${progress.records.toLocaleString("pt-BR")} respostas` : "…"}
             </div>
           )}
 
+          {/* framer anima opacity inline no filho; a degradação mora num invólucro próprio */}
+          <div data-stale={stale || undefined} className="stale-fade">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={page} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2, ease: "easeOut" }}>
               {page === "agora" && <AgoraPage />}
@@ -621,6 +616,7 @@ export function App() {
               )}
             </motion.div>
           </AnimatePresence>
+          </div>
         </main>
         <AnimatePresence>{wide && chatOpen && <ChatSidePanel key="chat" tier={tier as "desktop" | "tv"} onClose={() => setChatOpen(false)} />}</AnimatePresence>
       </div>
