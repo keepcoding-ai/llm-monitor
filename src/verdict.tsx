@@ -7,6 +7,7 @@ import { Badge, Button, Skeleton } from "@atrium/core-ui";
 import { CaretLeft, GearSix } from "@phosphor-icons/react";
 import type { Verdict, VerdictState, VerdictWindow } from "../shared/snapshot";
 import { ago, tokens, usd, useSnapshot } from "./sdk";
+import { AutoAnalysisToggle } from "./auto-analysis";
 
 /** Cor por intenção do estado (borda do veredito e selo). */
 const STATE_VIEW: Record<VerdictState, { label: string; bar: string; tone: "success" | "warning" | "error" | "muted" | "info"; text: string }> = {
@@ -122,6 +123,8 @@ export function VerdictBlock({ onSettings, layout = "stack" }: { onSettings: () 
           ))}
         </div>
       )}
+      {/* cota apertada (ou análises já desligadas): o toggle fica onde a decisão nasce */}
+      {(["attention", "critical", "exhausted"].includes(v.underlying ?? v.state) || !s.pulse.enabled) && <AutoAnalysisToggle compact model={s.pulse.model} />}
       {v.state === "missing" && s.autonomy.basis === "trend" && <p className="text-sm text-muted-foreground">{s.autonomy.verdict}</p>}
     </section>
   );

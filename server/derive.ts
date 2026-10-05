@@ -351,7 +351,7 @@ export function buildSnapshot(): Snapshot {
     flags: listFlags(),
     suggestions: [],
     soul: soulPools(),
-    pulse: { lastAt: getLastPulse()?.at ?? null, nextAt: pulseState.nextAt, running: pulseState.running, last: getLastPulse() },
+    pulse: { enabled: cfg.pulse.enabled, model: cfg.pulse.model, lastAt: getLastPulse()?.at ?? null, nextAt: pulseState.nextAt, running: pulseState.running, last: getLastPulse() },
   };
   snap.suggestions = suggestions(snap, rToday, wins);
   return snap;

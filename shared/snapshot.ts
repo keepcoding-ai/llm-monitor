@@ -89,7 +89,7 @@ export type Snapshot = {
   flags: FlagView[];
   suggestions: Suggestion[];
   soul: SoulPool[];
-  pulse: { lastAt: string | null; nextAt: string | null; running: boolean; last?: PulseRecord | null };
+  pulse: { enabled: boolean; model: string; lastAt: string | null; nextAt: string | null; running: boolean; last?: PulseRecord | null };
 };
 
 export type PulseRecord = {

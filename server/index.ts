@@ -15,6 +15,7 @@ import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
 import { writeClaudeDefaults, settingsPath, readClaudeSettings } from "./control.ts";
 import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun } from "./llm.ts";
+import { createPulseScheduler } from "./pulse-schedule.ts";
 import { loadLayout, pendingTestList, proposeWidget, reportTest, restoreWidget, undoWidget } from "./widgets.ts";
 import type { Snapshot } from "../shared/snapshot.ts";
 
@@ -85,27 +86,18 @@ setInterval(() => {
 
 // ------------------------------------------------------------ pulso agendado
 
-let pulseTimer: NodeJS.Timeout | null = null;
-function schedulePulse() {
-  if (pulseTimer) clearTimeout(pulseTimer);
-  const cfg = loadConfig();
-  if (!cfg.pulse.enabled) {
-    setPulseState({ nextAt: null });
-    return;
-  }
-  const ms = cfg.pulse.everyMinutes * 60_000;
-  setPulseState({ nextAt: new Date(Date.now() + ms).toISOString() });
-  pulseTimer = setTimeout(async () => {
-    try {
-      await pulse("agenda");
-    } catch (e) {
-      console.error("[pulso]", (e as Error).message);
-    }
+// Análises automáticas: desligadas ⇒ nenhum turno periódico de LLM é agendado.
+const pulseScheduler = createPulseScheduler({
+  config: () => loadConfig().pulse,
+  run: () => pulse("agenda"),
+  after: () => {
     snapshot = buildSnapshot();
     publish("snapshot", snapshot);
-    schedulePulse();
-  }, ms);
-}
+  },
+  setNextAt: (nextAt) => setPulseState({ nextAt }),
+  log: (m) => console.error("[pulso]", m),
+});
+const schedulePulse = pulseScheduler.schedule;
 
 // ------------------------------------------------------------ API
 
@@ -226,8 +218,21 @@ api.put("/config", async (c) => {
   if (!Array.isArray(next.soulPools) || next.soulPools.some((p) => !p.dir)) return c.json({ ok: false, error: "lista de pools inválida" }, 400);
   writeJson(P.config, next);
   schedulePulse();
-  void cycle();
+  void cycle(); // republica o snapshot (com pulse.enabled atualizado)
   return c.json({ ok: true, config: next });
+});
+
+// Toggle "Análises automáticas (Haiku)": o dono desliga quando a cota está crítica.
+api.get("/auto-analysis", (c) => c.json({ enabled: loadConfig().pulse.enabled }));
+api.put("/auto-analysis", async (c) => {
+  const { enabled } = (await c.req.json()) as { enabled?: unknown };
+  if (typeof enabled !== "boolean") return c.json({ ok: false, error: "informe enabled: true ou false" }, 400);
+  const cur = loadConfig();
+  writeJson(P.config, { ...cur, pulse: { ...cur.pulse, enabled } });
+  schedulePulse();
+  snapshot = buildSnapshot();
+  publish("snapshot", snapshot);
+  return c.json({ ok: true, enabled });
 });
 
 api.post("/pulse", async (c) => {

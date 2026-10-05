@@ -7,6 +7,7 @@ import { ThemeToggle } from "../theme";
 import { ago, call, modelName, usd, useLayout, useLive, useSnapshot } from "../sdk";
 import { setHash } from "../router";
 import { NotifySetting } from "../notify";
+import { AutoAnalysisToggle } from "../auto-analysis";
 import type { PulseRecord } from "../../shared/snapshot";
 
 const PADRAO = "__padrao__";
@@ -143,7 +144,7 @@ function Platform() {
     call<{ config: Cfg }>("/config").then((r) => setCfg(r.config));
     call<PulseRecord[]>("/pulses").then(setPulses, () => undefined);
     call<{ model: string; costUSD: number | null }[]>("/proposals").then(setProposals, () => undefined);
-  }, [s?.pulse.lastAt]);
+  }, [s?.pulse.lastAt, s?.pulse.enabled]);
   if (!s || !cfg) return null;
   const save = async (patch: Partial<Cfg>) => {
     setMsg(null);
@@ -162,13 +163,7 @@ function Platform() {
   const escCost = canEscalate ? typical(proposals.filter((p) => p.model === escalation!.model).map((p) => p.costUSD)) : null;
   return (
     <Section title="Plataforma" desc="O que o próprio monitor gasta: pulso de hora em hora, chat e escaladas. Equivalente API.">
-      <Field>
-        <FieldLabel>Pulso</FieldLabel>
-        <ToggleGroup type="single" value={cfg.pulse.enabled ? "on" : "off"} onValueChange={(v: string) => v && save({ pulse: { ...cfg.pulse, enabled: v === "on" } })} variant="outline" size="sm" className="justify-start">
-          <ToggleGroupItem value="on">Ligado</ToggleGroupItem>
-          <ToggleGroupItem value="off">Desligado</ToggleGroupItem>
-        </ToggleGroup>
-      </Field>
+      <AutoAnalysisToggle model={cfg.pulse.model} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field>
           <FieldLabel>Intervalo (min)</FieldLabel>
