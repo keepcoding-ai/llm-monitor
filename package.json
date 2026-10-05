@@ -11,9 +11,9 @@
     "test": "node --import tsx --test server/*.test.ts"
   },
   "dependencies": {
-    "@atrium/core-ui": "file:../../atrium/packages/core-ui",
-    "@codrstudio/model-matrix": "file:../../commons/packages/model-matrix",
-    "@codrstudio/provider-pool": "file:../../commons/packages/provider-pool",
+    "@atrium/core-ui": "file:../atrium/packages/core-ui",
+    "@codrstudio/model-matrix": "file:../commons/packages/model-matrix",
+    "@codrstudio/provider-pool": "file:../commons/packages/provider-pool",
     "@hono/node-server": "^1.14.0",
     "@phosphor-icons/react": "^2.1.7",
     "@shadcn/react": "^0.3.1",

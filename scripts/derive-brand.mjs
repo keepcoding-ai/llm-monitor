@@ -73,7 +73,7 @@ for (const t of ["light", "dark"]) for (const n of ["logo", "logo-h", "logo-v"])
 
 // ---------------------------------------------------------------- Chromium
 function resolveChromium() {
-  const tries = [() => createRequire(import.meta.url)("playwright"), () => createRequire(import.meta.url)(path.resolve(ROOT, "../../atrium/so/node_modules/playwright"))];
+  const tries = [() => createRequire(import.meta.url)("playwright"), () => createRequire(import.meta.url)(path.resolve(ROOT, "../atrium/so/node_modules/playwright"))];
   for (const t of tries) {
     try {
       return t().chromium;

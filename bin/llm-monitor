@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # llm-monitor — sobe, consulta e para o LLM Monitor (espelha a skill llm-monitor).
 # LLM_MONITOR_DIR so existe para teste; o padrao e fixo.
-APP_DIR="${LLM_MONITOR_DIR:-/d/atrium/workspace/guga/llm-monitor}"
+APP_DIR="${LLM_MONITOR_DIR:-/d/atrium/workspace/llm-monitor}"
 RUN_DIR="/d/atrium/.tmp/llm-monitor"
 PID_FILE="$RUN_DIR/run.pid"
 FRONT_PORT=4781
@@ -108,12 +108,12 @@ llm-monitor is not installed on this machine ($APP_DIR).
 
 Prerequisites: clone the atrium (workspace/atrium) and commons (workspace/commons) repos
 first (file: dependencies), and add a statusLine entry to ~/.claude/settings.json:
-  node D:/atrium/workspace/guga/llm-monitor/statusline.mjs
+  node D:/atrium/workspace/llm-monitor/statusline.mjs
 
 Then, one command at a time (Git Bash):
   gh auth status
-  git clone git@github.com:gugacoder/llm-monitor.git /d/atrium/workspace/guga/llm-monitor
-  cd /d/atrium/workspace/guga/llm-monitor
+  git clone git@github.com:keepcoding-ai/llm-monitor.git /d/atrium/workspace/llm-monitor
+  cd /d/atrium/workspace/llm-monitor
   npm install
 R
     return 1

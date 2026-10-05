@@ -7,7 +7,7 @@ pasta (`state/`).
 ## Rodar
 
 ```bash
-cd /d/atrium/workspace/guga/llm-monitor
+cd /d/atrium/workspace/llm-monitor
 npm install
 npm run dev
 ```
@@ -25,7 +25,7 @@ Para ativar, acrescente em `~/.claude/settings.json` (o app NÃO faz isso por vo
 ```json
 "statusLine": {
   "type": "command",
-  "command": "node D:/atrium/workspace/guga/llm-monitor/statusline.mjs"
+  "command": "node D:/atrium/workspace/llm-monitor/statusline.mjs"
 }
 ```
 
@@ -89,7 +89,7 @@ O script vive em `bin/llm-monitor`; em máquina nova, instale só o wrapper em `
 mkdir -p ~/.bash-bin
 ```
 ```bash
-printf '#!/usr/bin/env bash\nexec /d/atrium/workspace/guga/llm-monitor/bin/llm-monitor "$@"\n' > ~/.bash-bin/llm-monitor
+printf '#!/usr/bin/env bash\nexec /d/atrium/workspace/llm-monitor/bin/llm-monitor "$@"\n' > ~/.bash-bin/llm-monitor
 ```
 ```bash
 chmod +x ~/.bash-bin/llm-monitor
