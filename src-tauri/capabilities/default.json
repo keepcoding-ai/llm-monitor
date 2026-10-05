@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Janela principal: só a tela de carregando local; a UI vem do server em 127.0.0.1 e não usa IPC.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

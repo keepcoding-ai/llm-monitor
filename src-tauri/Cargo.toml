@@ -1,0 +1,16 @@
+[package]
+name = "llm-monitor-desktop"
+version = "0.1.0"
+description = "LLM Monitor — app desktop (sobe o server junto)"
+edition = "2021"
+
+[lib]
+name = "llm_monitor_desktop_lib"
+# só rlib: o cdylib (mobile) estoura o limite de ordinais do ld no toolchain GNU do Windows
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }

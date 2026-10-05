@@ -112,3 +112,30 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\atrium\workspace\guga\llm
 
 Cria a chave `App Paths\llm-monitor.exe` (aponta para `bin\llm-monitor.vbs`) e o atalho
 `LLM Monitor.lnk` em `shell:startup`. Não deixe um arquivo `llm-monitor` em pasta do PATH do Windows.
+
+## Desktop (Tauri v2)
+
+App de janela que, ao abrir, garante o server e mostra a UI. Fica em `src-tauri/`.
+
+```bash
+npm run tauri:dev     # janela em modo dev (compila o Rust em debug)
+npm run tauri:build   # gera src-tauri/target/release/llm-monitor-desktop.exe e o instalador NSIS em bundle/nsis/
+```
+
+Como funciona:
+
+- **A UI vem do Vite**, a mesma URL do `npm run dev` (`http://127.0.0.1:4781/llm-monitor/`). Não há build estático porque os widgets (`widgets/<id>/v<n>.tsx`) são importados e transformados pelo Vite em tempo de execução.
+- **Ao abrir**, checa a API (`4780`, `GET /llm-monitor/api/v1/auto-analysis`) e o front (`4781`). O que já responde é reusado; o que falta é iniciado com `node` + `tsx`/`vite` a partir do checkout, sem console (CREATE_NO_WINDOW). Uma tela de carregando fica até API, front e proxy do front responderem.
+- **Ao fechar**, encerra só a árvore dos PIDs que ela mesma iniciou (`taskkill /PID <pid> /T /F`). Server que já estava rodando antes continua de pé.
+- Logs dos filhos: `%TEMP%\llm-monitor-desktop-server.log` e `%TEMP%\llm-monitor-desktop-web.log`.
+
+Variáveis:
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `LLM_MONITOR_DIR` | pasta do repo onde o app foi buildado | checkout do llm-monitor (precisa de `node_modules`) |
+| `LLM_MONITOR_NODE` | `node` (do PATH) | executável do Node |
+| `LLM_MONITOR_PORT` / `LLM_MONITOR_WEB_PORT` | `4780` / `4781` | portas da API e do front |
+
+O ícone vem de `public/icons/icon-512.png` (derivado de `brand/llm-monitor`): `npx tauri icon public/icons/icon-512.png -o src-tauri/icons`.
+O crate só gera `rlib` (sem `cdylib`): no toolchain GNU do Windows o `cdylib` estoura o limite de ordinais do `ld`.
