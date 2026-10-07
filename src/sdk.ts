@@ -11,7 +11,8 @@ export type ChatEvent =
   | { type: "message"; message: ChatMsg }
   | { type: "start"; id: string }
   | { type: "delta"; id: string; text: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string }
+  | { type: "reset" };
 export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: { name: string; type: string; file: string }[] };
 
 type State = {

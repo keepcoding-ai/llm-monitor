@@ -56,7 +56,8 @@ function start() {
         // erro: a pergunta volta ao campo para tentar de novo
         if (ev.message.error && !st.draft) set({ draft: st.lastQuestion, pending: st.pending.length ? st.pending : st.lastAttachments });
       }
-    } else if (ev.type === "start") set({ streaming: { id: ev.id, text: "" } });
+    } else if (ev.type === "reset") set({ msgs: [], streaming: null, err: null, draft: "", pending: [], lastQuestion: "", lastAttachments: [] });
+    else if (ev.type === "start") set({ streaming: { id: ev.id, text: "" } });
     else if (ev.type === "delta") set({ streaming: st.streaming && st.streaming.id === ev.id ? { ...st.streaming, text: st.streaming.text + ev.text } : { id: ev.id, text: ev.text } });
     else if (ev.type === "error") set({ err: ev.error, streaming: null, draft: st.draft || st.lastQuestion, pending: st.pending.length ? st.pending : st.lastAttachments });
   });

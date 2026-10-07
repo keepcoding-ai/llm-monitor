@@ -2,7 +2,7 @@
 // Tudo via `claude -p`, rodando em state/agent-work para o coletor reconhecer
 // o gasto da própria plataforma pelo cwd gravado nos jsonl.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AGENT_WORK, APP_ROOT, P, STATE, appendJsonl, loadConfig, readJson, readJsonl, writeJson } from "./store.ts";
 import { buildSnapshot, setPulseState } from "./derive.ts";
@@ -296,6 +296,9 @@ _(interrompida por você)_` : "", at: new Date().toISOString(), costUSD: res.cos
 
 export function resetChat(): void {
   writeJson(P.chatSession, {});
+  // não destrói: arquiva o histórico atual ao lado, com timestamp, e o visível recomeça vazio
+  if (existsSync(P.chat)) renameSync(P.chat, P.chat.replace(/\.jsonl$/, "") + `.${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
+  publish("chat", { type: "reset" });
 }
 
 export function listProposals(): { file: string; at: string; model: string; title: string; rationale: string; hasWidget: boolean; costUSD: number | null }[] {

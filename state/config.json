@@ -11,7 +11,7 @@
     }
   ],
   "pulse": {
-    "enabled": false,
+    "enabled": true,
     "everyMinutes": 60,
     "model": "haiku",
     "autoEscalate": false
