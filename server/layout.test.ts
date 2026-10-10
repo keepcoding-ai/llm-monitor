@@ -67,8 +67,8 @@ test("sem layout anterior, nasce do disco", () => {
 test("coleção vem dos manifests; widget sem manifest fica invisível", () => {
   const real = scanCollection();
   const bySrc = (src: string) => real.filter((m) => m.source === src).map((m) => m.id).sort();
-  assert.deepEqual(bySrc("versioned"), ["avisos", "janelas", "o-que-comeu", "reserva", "reserva-linha", "semana-ritmo"]);
-  assert.deepEqual(bySrc("builtin"), ["cabe", "veredito"]);
+  for (const id of ["avisos", "janelas", "o-que-comeu", "reserva", "reserva-linha", "semana-ritmo"]) assert.ok(bySrc("versioned").includes(id), id);
+  for (const id of ["cabe", "veredito"]) assert.ok(bySrc("builtin").includes(id), id);
   assert.ok(!real.some((m) => m.id === "chat"), "chat não tem manifest");
 
   const tmp = mkdtempSync(join(tmpdir(), "coll-"));

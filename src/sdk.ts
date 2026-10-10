@@ -16,6 +16,7 @@ export type ChatEvent =
   | { type: "step"; id: string; step: ChatStep }
   | { type: "step-done"; id: string; stepId: string; ok: boolean; output: string }
   | { type: "error"; error: string }
+  | { type: "widget"; id: string; v: number; status: "active" | "testing" | "failed"; title: string }
   | { type: "reset" };
 export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: { name: string; type: string; file: string }[]; steps?: ChatStep[] };
 

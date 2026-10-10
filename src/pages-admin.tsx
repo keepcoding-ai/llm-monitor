@@ -7,21 +7,21 @@ import { CSS } from "@dnd-kit/utilities";
 import { DotsSixVertical, Plus, StackSimple, Trash } from "@phosphor-icons/react";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-  Badge, Button, ErrorNotice, ErrorNoticeMessage, Field, FieldLabel, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch,
+  Badge, Button, ErrorNotice, ErrorNoticeMessage, Field, FieldLabel, Input, Select, SelectContent, SelectItem, SelectTrigger, Switch,
 } from "@atrium/core-ui";
-import { iconFor } from "./icons";
+import { iconFor, iconLabel } from "./icons";
 import { go, setHash } from "./router";
 import { createPage, deletePage, reorderPages, updatePage, useLayout } from "./sdk";
 import { ICON_NAMES, type PageDef } from "../shared/snapshot";
 
 type Act = (fn: () => Promise<unknown>) => void;
 
-/** Ícone + nome, para o seletor. */
+/** Ícone + rótulo em português, para o seletor. */
 function IconOption({ name }: { name: string }) {
   const Icon = iconFor(name);
   return (
     <span className="flex items-center gap-2">
-      <Icon className="size-5" /> {name}
+      <Icon className="size-5" /> {iconLabel(name)}
     </span>
   );
 }
@@ -30,9 +30,8 @@ function IconSelect({ value, onChange, label }: { value: string; onChange: (v: s
   const Icon = iconFor(value);
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="min-h-11 w-auto gap-2" aria-label={label}>
+      <SelectTrigger className="min-h-11 w-auto gap-2" aria-label={`${label}: ${iconLabel(value)}`}>
         <Icon className="size-5" />
-        <SelectValue />
       </SelectTrigger>
       <SelectContent>
         {ICON_NAMES.map((n) => (

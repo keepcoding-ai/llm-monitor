@@ -5,13 +5,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button, InputGroup, InputGroupAddon, InputGroupTextarea, Markdown, Spinner, ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Tooltip, TooltipContent, TooltipTrigger, Collapsible, CollapsibleContent, CollapsibleTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@atrium/core-ui";
-import { ArrowClockwise, ArrowUp, CaretRight, FilePdf, FileText, MagnifyingGlass, NotePencil, Paperclip, PencilSimple, Robot, Stop, Terminal, Wrench, X } from "@phosphor-icons/react";
-import { API, call, onChat, usd, useLive, useRestartPending, type ChatMsg, type ChatStep } from "./sdk";
+import { ArrowClockwise, ArrowUp, Check, CaretRight, Cube, FilePdf, FileText, MagnifyingGlass, NotePencil, Paperclip, PencilSimple, Robot, Stop, Terminal, Wrench, X } from "@phosphor-icons/react";
+import { API, addSlot, call, onChat, usd, useLayout, useLive, useRestartPending, type ChatMsg, type ChatStep } from "./sdk";
+import { go, setHash, usePage } from "./router";
 
 type Pending = { id: string; name: string; type: string; data: string; url: string };
 type Streaming = { id: string; text: string; steps: ChatStep[]; startedAt: number };
-type ChatState = { msgs: ChatMsg[]; loaded: boolean; streaming: Streaming | null; err: string | null; draft: string; lastQuestion: string; shown: number; model: string | null; effort: string | null; pending: Pending[]; lastAttachments: Pending[] };
-let st: ChatState = { msgs: [], loaded: false, streaming: null, err: null, draft: "", lastQuestion: "", shown: 50, model: null, effort: null, pending: [], lastAttachments: [] };
+type WidgetCard = { id: string; v: number; status: "active" | "testing" | "failed"; title: string };
+type ChatState = { cards: WidgetCard[]; msgs: ChatMsg[]; loaded: boolean; streaming: Streaming | null; err: string | null; draft: string; lastQuestion: string; shown: number; model: string | null; effort: string | null; pending: Pending[]; lastAttachments: Pending[] };
+let st: ChatState = { cards: [], msgs: [], loaded: false, streaming: null, err: null, draft: "", lastQuestion: "", shown: 50, model: null, effort: null, pending: [], lastAttachments: [] };
 
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp,application/pdf";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -57,7 +59,11 @@ function start() {
         // erro: a pergunta volta ao campo para tentar de novo
         if (ev.message.error && !st.draft) set({ draft: st.lastQuestion, pending: st.pending.length ? st.pending : st.lastAttachments });
       }
-    } else if (ev.type === "reset") set({ msgs: [], streaming: null, err: null, draft: "", pending: [], lastQuestion: "", lastAttachments: [] });
+    } else if (ev.type === "widget") {
+      // vários eventos do mesmo widget atualizam o mesmo cartão
+      const card: WidgetCard = { id: ev.id, v: ev.v, status: ev.status, title: ev.title };
+      set({ cards: st.cards.some((c) => c.id === ev.id) ? st.cards.map((c) => (c.id === ev.id ? card : c)) : [...st.cards, card] });
+    } else if (ev.type === "reset") set({ cards: [], msgs: [], streaming: null, err: null, draft: "", pending: [], lastQuestion: "", lastAttachments: [] });
     else if (ev.type === "start") set({ streaming: { id: ev.id, text: "", steps: [], startedAt: st.streaming?.startedAt ?? Date.now() } });
     else if (ev.type === "delta") set({ streaming: st.streaming && st.streaming.id === ev.id ? { ...st.streaming, text: st.streaming.text + ev.text } : { id: ev.id, text: ev.text, steps: [], startedAt: st.streaming?.startedAt ?? Date.now() } });
     else if (ev.type === "step" && st.streaming) set({ streaming: { ...st.streaming, steps: [...st.streaming.steps.filter((x) => x.id !== ev.step.id), ev.step] } });
@@ -173,6 +179,66 @@ function LiveStatus({ streaming }: { streaming: Streaming }) {
       <Spinner /> {running ? running.name : streaming.text ? "respondendo…" : "pensando…"}
       <span className="text-xs tabular-nums">{elapsed}</span>
     </span>
+  );
+}
+
+/** Cartão "widget pronto": estado vivo do widget que o chat criou ou versionou. */
+function WidgetCardView({ card }: { card: WidgetCard }) {
+  const layout = useLayout();
+  const page = usePage();
+  const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // testing → pronto quando o layout publica essa versão (ou uma mais nova) como ativa
+  const activeV = layout?.versions[card.id]?.find((x) => x.status === "active")?.v ?? 0;
+  const status = card.status === "testing" && activeV >= card.v ? "active" : card.status;
+  const current = layout?.pages.find((p) => p.id === page);
+  const isGrid = current?.kind === "grid";
+  const firstGrid = [...(layout?.pages ?? [])].sort((a, b) => a.order - b.order).find((p) => p.kind === "grid");
+  const add = async () => {
+    if (!current) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await addSlot(current.id, card.id);
+      setAdded(true);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const failed = status === "failed";
+  return (
+    <div className={`flex flex-col gap-2 rounded-lg border p-3 text-sm ${failed ? "border-x-error/40" : ""}`} data-testid="chat-widget-card" data-status={status}>
+      <div className="flex items-start gap-2">
+        {status === "testing" ? <Spinner className="mt-0.5 size-4 shrink-0" /> : <Cube className={`mt-0.5 size-4 shrink-0 ${failed ? "text-x-error" : "text-x-success"}`} />}
+        <span className={failed ? "text-x-error" : ""}>
+          {status === "active" && <>Widget <strong>{card.title}</strong> pronto (versão {card.v})</>}
+          {status === "testing" && <>Widget <strong>{card.title}</strong> aguardando teste de tela</>}
+          {failed && <>Widget <strong>{card.title}</strong> reprovado no teste</>}
+        </span>
+      </div>
+      {status === "active" && (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" className="min-h-11 md:min-h-9" disabled={!isGrid || busy || added} onClick={() => void add()}>
+            {added ? <Check /> : null} {added ? "Adicionado" : "Adicionar a esta página"}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="min-h-11 md:min-h-9"
+            onClick={() => {
+              if (!isGrid && firstGrid) go(firstGrid.id);
+              setHash("colecao");
+            }}
+          >
+            Ver na coleção
+          </Button>
+        </div>
+      )}
+      {err && <p className="text-xs text-x-error">{err}</p>}
+    </div>
   );
 }
 
@@ -301,6 +367,7 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
             </div>
           ),
         )}
+        {s.cards.map((c) => <WidgetCardView key={c.id} card={c} />)}
         {s.streaming && (
           <div className="text-sm">
             {s.streaming.text && <Markdown source={s.streaming.text} measure="reading" />}
@@ -397,21 +464,26 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
           <InputGroupAddon key="send" align="inline-end" className="m-0 p-0 has-[>button]:m-0">{sendBtn}</InputGroupAddon>
         )}
       </InputGroup>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="chat-price">
-        <span>responde com</span>
-        <Select value={s.model ?? undefined} onValueChange={(v) => void setChatConfig({ model: v })}>
-          <SelectTrigger size="sm" className="h-11 w-auto gap-1 text-xs md:h-8" aria-label="Modelo do chat"><SelectValue placeholder="…" /></SelectTrigger>
-          <SelectContent>{MODELS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
-        </Select>
-        <span>esforço</span>
-        <Select value={s.effort ?? "default"} onValueChange={(v) => void setChatConfig({ effort: v === "default" ? null : v })}>
-          <SelectTrigger size="sm" className="h-11 w-auto gap-1 text-xs md:h-8" aria-label="Esforço do chat"><SelectValue /></SelectTrigger>
-          <SelectContent>{EFFORTS.map((e) => <SelectItem key={e.value} value={e.value}>{e.label}</SelectItem>)}</SelectContent>
-        </Select>
-        <span>· {cost != null ? `~${usd(cost, 2)} por pergunta` : "custo aparece após a primeira resposta"}</span>
-        <Button variant="ghost" size="sm" className="ml-auto h-11 gap-1 text-xs text-muted-foreground md:h-8" disabled={restartPending || !connected} onClick={() => void call("/system/restart", { body: {} }).catch((e) => set({ err: (e as Error).message }))}>
-          <ArrowClockwise /> Reiniciar servidor
-        </Button>
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground" data-testid="chat-price">
+        <div className="flex items-center gap-2">
+          <Select value={s.model ?? undefined} onValueChange={(v) => void setChatConfig({ model: v })}>
+            <SelectTrigger size="sm" className="h-11 min-w-0 flex-1 gap-1 text-xs md:h-8" aria-label="Modelo do chat"><span className="text-muted-foreground">Modelo</span><SelectValue placeholder="…" /></SelectTrigger>
+            <SelectContent>{MODELS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+          </Select>
+          <Select value={s.effort ?? "default"} onValueChange={(v) => void setChatConfig({ effort: v === "default" ? null : v })}>
+            <SelectTrigger size="sm" className="h-11 min-w-0 flex-1 gap-1 text-xs md:h-8" aria-label="Esforço do chat"><span className="text-muted-foreground">Esforço</span><SelectValue /></SelectTrigger>
+            <SelectContent>{EFFORTS.map((e) => <SelectItem key={e.value} value={e.value}>{e.label}</SelectItem>)}</SelectContent>
+          </Select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="size-11 shrink-0 text-muted-foreground md:size-8" aria-label="Reiniciar servidor" disabled={restartPending || !connected} onClick={() => void call("/system/restart", { body: {} }).catch((e) => set({ err: (e as Error).message }))}>
+                <ArrowClockwise />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reiniciar servidor</TooltipContent>
+          </Tooltip>
+        </div>
+        <span>{cost != null ? `~${usd(cost, 2)} por pergunta` : "custo aparece após a primeira resposta"}</span>
       </div>
     </div>
   );

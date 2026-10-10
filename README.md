@@ -13,8 +13,10 @@ npm run dev
 ```
 
 Abra `http://127.0.0.1:4781/llm-monitor/`. API em `http://127.0.0.1:4780/llm-monitor/api/v1`.
-A primeira subida lê todo o histórico de `~/.claude/projects` (≈4 GB levou ~46 s); depois
-cada ciclo lê só o que cresceu (< 1 s).
+A primeira subida lê todo o histórico de `~/.claude/projects` (≈4 GB levou ~46 s). Depois, a
+cada ciclo só são examinados os arquivos mexidos nas últimas 24 h, e só os que cresceram são
+lidos. A varredura completa se repete a cada 5 min: uma sessão nova pode levar até 5 min para
+aparecer.
 
 ## Ativar a statusline (limites de 5 h e semana)
 
@@ -59,8 +61,25 @@ automática vem desligada (`pulse.autoEscalate`); o botão "Escalar" fica nas su
 Teto diário de gasto da plataforma em `platformDailyBudgetUSD`; as chamadas da plataforma
 rodam em `state/agent-work/` e são separadas pelo `cwd` gravado nos jsonl.
 
-**Chat**: `claude -p` (haiku, stream-json com mensagens parciais) com resumo + leitura de
-`state/` e do código; histórico em `state/chat/`.
+**Chat**: roda o Claude Code com poder total na máquina (sem restrição de permissão), com resumo
++ leitura de `state/` e do código; histórico em `state/chat/`. Modelo e esforço escolhíveis na
+tela; passos de ferramenta aparecem na conversa; parar mata a árvore de processos pelo PID.
+Config no bloco `chat` de `state/config.json` (valores padrão do schema em `server/store.ts`):
+
+- `model`: modelo do chat (padrão `haiku`).
+- `effort`: esforço do chat; sem valor, não é passado ao `claude`.
+- `bypassPermissions`: `true` passa `--dangerously-skip-permissions` (padrão `true`).
+- `dirs`: pastas extras liberadas com `--add-dir` (padrão `D:/atrium`).
+- `timeoutMin`: tempo limite de uma resposta, em minutos (padrão `60`).
+- `ignoreBudget`: `true` tira o chat do teto diário (padrão `true`). Pulso e escalada seguem com o teto `platformDailyBudgetUSD`.
+
+O chat cria e versiona widgets conforme `docs/widget-guide.md`: rascunho em
+`state/agent-work/drafts/`, publicação pela API (ver "Plataforma viva"), passando pelo mesmo
+portão (typecheck + render de teste, que precisa do monitor aberto num navegador).
+
+**Reinício**: `POST /system/restart` marca o reinício; o server executa quando o chat fica
+ocioso. Ele se substitui por um processo destacado (log em `state/restart.log`), então funciona
+seja qual for o lançador (terminal, app desktop).
 
 **Controle**: modelo/effort padrão do Claude Code gravados em `~/.claude/settings.json` só
 pelo botão "Aplicar" (leitura-modifica-escrita, resto do arquivo intacto, backup em
@@ -72,12 +91,40 @@ pelo botão "Aplicar" (leitura-modifica-escrita, resto do arquivo intacto, backu
 import dinâmico servido pelo próprio Vite — mesmo grafo de dependências do app (uma React,
 um framer-motion, um core-ui), sem bundle paralelo. Versões são imutáveis.
 
-Troca: `POST /llm-monitor/api/v1/widgets/<id>/versions {code, note}` → grava `v<n+1>` →
-typecheck (tsc) → render de teste num harness oculto do navegador (ErrorBoundary) → só então
-o slot muda, com entrada animada e selo "versão n". Cada slot tem ErrorBoundary próprio;
-o painel "Versões" (`#versoes/<widget>`) desfaz a última troca ou põe no ar uma guardada.
+Troca: a versão nova grava `v<n+1>` → typecheck (tsc) → render de teste num harness oculto do
+navegador (ErrorBoundary) → só então o slot muda, com entrada animada e selo "versão n". Cada
+slot tem ErrorBoundary próprio. Versões são imutáveis.
 
-Rotas: `/llm-monitor/` (painel) e `/llm-monitor/w/<slot>` (widget em foco).
+A montagem é por página. `state/layout.json` está na rev 5: `pages` (id, title, icon, order,
+kind `grid`/`single`/`settings`, menu, fixed) e `slots` (widget, version, page, order, w 1–3,
+h 1–4). A coleção de widgets é derivada de `widgets/<id>/manifest.json` a cada leitura; widget
+sem manifest não aparece. A migração da rev 4 faz backup em
+`state/backups/layout-rev4-<timestamp>.json`.
+
+Páginas `grid` são grades de células quadradas, em 1, 2 ou 3 colunas conforme a largura do
+container (`src/grid.tsx`). O widget ocupa w colunas × h linhas e rola por dentro. Veredito e
+"Cabe?" são peças de código (builtin, `src/builtins.ts`), posicionáveis como qualquer widget.
+
+Montagem na tela: "Editar página" permite arrastar, mudar largura e altura, mover para outra
+página, remover e adicionar da coleção (`src/collection.tsx`, hash `#colecao`). Em Ajustes, a
+seção "Menu" cria, renomeia, troca ícone, reordena e apaga páginas (`src/pages-admin.tsx`).
+Arrastar usa `@dnd-kit`.
+
+API (prefixo `/llm-monitor/api/v1`):
+
+- `GET /layout` e `GET /collection`: layout completo e coleção de widgets.
+- `POST /pages` cria página; `PATCH /pages/:id` troca título, ícone ou menu; `DELETE /pages/:id` apaga (páginas fixas não).
+- `PUT /pages/order` reordena as páginas do menu.
+- `POST /pages/:id/slots` adiciona widget da coleção à página; `PUT /pages/:id/slots/order` reordena os slots.
+- `PATCH /slots/:id` muda tamanho, página ou título; `DELETE /slots/:id` remove o slot.
+- `POST /widgets` cria widget novo a partir de rascunho (`id`, `title`, `description`, `size`, `file`); responde 201 aprovado, 202 pendente do render de teste, 422 reprovado.
+- `POST /widgets/:id/versions/from-file` publica nova versão de um widget existente (`file`, `note`), com o mesmo portão.
+- `POST /widgets/:id/versions` (`code`, `note`) propõe versão enviando o código no corpo.
+- `POST /system/restart` pede o reinício (ver "Chat").
+
+Rotas de tela: `/llm-monitor/<pageId>` (ex.: `/llm-monitor/` é a página `agora`), com
+`/llm-monitor/semana` redirecionando para `/llm-monitor/ciclo`. `#versoes/<widget>` abre o
+painel de versões, que desfaz a última troca ou põe no ar uma guardada.
 
 ## Comando llm-monitor
 
@@ -107,7 +154,7 @@ echo 'export PATH="$HOME/.bash-bin:$PATH"' >> ~/.bashrc
 ele sobe sozinho, oculto, sem abrir o navegador. Só HKCU, sem admin, idempotente. No PowerShell:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\atrium\workspace\guga\llm-monitor\bin\install-windows.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\atrium\workspace\llm-monitor\bin\install-windows.ps1
 ```
 
 Cria a chave `App Paths\llm-monitor.exe` (aponta para `bin\llm-monitor.vbs`) e o atalho

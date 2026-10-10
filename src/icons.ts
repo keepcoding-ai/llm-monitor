@@ -6,3 +6,10 @@ export const ICONS: Record<(typeof ICON_NAMES)[number], Icon> = { House, ArrowsC
 
 /** Nome desconhecido (layout mais novo que o front) cai numa estrela em vez de quebrar o menu. */
 export const iconFor = (name: string): Icon => (ICONS as Record<string, Icon>)[name] ?? Star;
+
+/** Rótulo em português de cada ícone, para o seletor. */
+export const ICON_LABELS: Record<(typeof ICON_NAMES)[number], string> = {
+  House: "Casa", ArrowsClockwise: "Ciclo", Lifebuoy: "Boia", GearSix: "Engrenagem", Warning: "Aviso", ChartBar: "Gráfico",
+  Gauge: "Medidor", Lightning: "Raio", Folder: "Pasta", Star: "Estrela", Clock: "Relógio", Coins: "Moedas",
+};
+export const iconLabel = (name: string): string => (ICON_LABELS as Record<string, string>)[name] ?? name;
