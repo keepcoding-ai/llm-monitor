@@ -96,3 +96,26 @@ test("args do chat: sem --tools, com bypass, effort e add-dir", () => {
   assert.deepEqual(args.slice(-2), ["--resume", "sess-1"]);
   assert.ok(!buildChatArgs({ ...cfg, bypassPermissions: false, effort: undefined }, "S").some((a) => a === "--dangerously-skip-permissions" || a === "--effort"));
 });
+
+test("PUT /config: chat parcial preserva os outros campos de chat", async () => {
+  const { mergeConfig } = await import("./config-merge.ts");
+  const cur = parseConfig({ chat: { model: "opus", effort: "high", dirs: ["E:/x"], timeoutMin: 30 } });
+  const next = mergeConfig(cur, { chat: { effort: "low" } } as any);
+  assert.equal(next.chat.effort, "low");
+  assert.equal(next.chat.model, "opus");
+  assert.deepEqual(next.chat.dirs, ["E:/x"]);
+  assert.equal(next.chat.timeoutMin, 30);
+  assert.equal(next.chatModel, "opus");
+  assert.equal(next.pulse.everyMinutes, cur.pulse.everyMinutes);
+});
+
+test("PUT /config: trocar chat.model atualiza o espelho chatModel; chatModel legado vira chat.model", async () => {
+  const { mergeConfig } = await import("./config-merge.ts");
+  const cur = parseConfig({ chat: { model: "haiku", effort: "high" } });
+  assert.equal(mergeConfig(cur, { chat: { model: "fable" } } as any).chatModel, "fable");
+  const legacy = mergeConfig(cur, { chatModel: "sonnet" } as any);
+  assert.equal(legacy.chat.model, "sonnet");
+  assert.equal(legacy.chat.effort, "high");
+  // corpo completo reenviado sem mudança não desfaz o chat
+  assert.equal(mergeConfig(cur, { ...cur, pulse: { enabled: false } } as any).chat.effort, "high");
+});

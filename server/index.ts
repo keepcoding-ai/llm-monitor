@@ -15,7 +15,8 @@ import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
 import { writeClaudeDefaults, settingsPath, readClaudeSettings } from "./control.ts";
 import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun, isChatBusy } from "./llm.ts";
-import { configureSystem, closeServer, listenWithRetry } from "./system.ts";
+import { configureSystem, closeServer, listenWithRetry, requestRestart } from "./system.ts";
+import { mergeConfig } from "./config-merge.ts";
 import type { Server } from "node:http";
 import { createPulseScheduler } from "./pulse-schedule.ts";
 import { z } from "zod";
@@ -218,7 +219,7 @@ api.get("/config", (c) => c.json({ config: loadConfig(), models: readJson<Models
 api.put("/config", async (c) => {
   const body = (await c.req.json()) as Partial<Config>;
   const cur = loadConfig();
-  const next: Config = { ...cur, ...body, pulse: { ...cur.pulse, ...(body.pulse ?? {}) } };
+  const next = mergeConfig(cur, body);
   if (!Array.isArray(next.soulPools) || next.soulPools.some((p) => !p.dir)) return c.json({ ok: false, error: "lista de pools inválida" }, 400);
   writeJson(P.config, next);
   schedulePulse();
@@ -304,6 +305,11 @@ api.get("/chat/files/:f", (c) => {
   if (!/^[\w-]+\.[A-Za-z0-9]+$/.test(f) || !existsSync(join(UPLOADS, f))) return c.json({ error: "não encontrado" }, 404);
   const types: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", pdf: "application/pdf" };
   return new Response(readFileSync(join(UPLOADS, f)), { headers: { "content-type": types[f.split(".").pop()!] ?? "application/octet-stream", "x-content-type-options": "nosniff", "content-security-policy": "sandbox" } });
+});
+// Reinício adiado: o server se substitui quando o chat fica ocioso (publica system {restartPending}).
+api.post("/system/restart", (c) => {
+  requestRestart();
+  return c.json({ ok: true, restartPending: true }, 202);
 });
 api.post("/chat/stop", (c) => c.json({ stopped: stopChatRun() }));
 // Ajustes → Linha de status → "como ativar": o único lugar da UI que mostra o comando (dono é dev)

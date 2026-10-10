@@ -4,13 +4,14 @@
 // painel/drawer não perde histórico nem rascunho.
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Button, InputGroup, InputGroupAddon, InputGroupTextarea, Markdown, Spinner, ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Tooltip, TooltipContent, TooltipTrigger } from "@atrium/core-ui";
-import { ArrowUp, NotePencil, Stop, Paperclip, X, FilePdf } from "@phosphor-icons/react";
-import { API, call, onChat, usd, useLive, type ChatMsg } from "./sdk";
+import { Button, InputGroup, InputGroupAddon, InputGroupTextarea, Markdown, Spinner, ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Tooltip, TooltipContent, TooltipTrigger, Collapsible, CollapsibleContent, CollapsibleTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@atrium/core-ui";
+import { ArrowClockwise, ArrowUp, CaretRight, FilePdf, FileText, MagnifyingGlass, NotePencil, Paperclip, PencilSimple, Robot, Stop, Terminal, Wrench, X } from "@phosphor-icons/react";
+import { API, call, onChat, usd, useLive, useRestartPending, type ChatMsg, type ChatStep } from "./sdk";
 
 type Pending = { id: string; name: string; type: string; data: string; url: string };
-type ChatState = { msgs: ChatMsg[]; loaded: boolean; streaming: { id: string; text: string } | null; err: string | null; draft: string; lastQuestion: string; shown: number; model: string | null; pending: Pending[]; lastAttachments: Pending[] };
-let st: ChatState = { msgs: [], loaded: false, streaming: null, err: null, draft: "", lastQuestion: "", shown: 50, model: null, pending: [], lastAttachments: [] };
+type Streaming = { id: string; text: string; steps: ChatStep[]; startedAt: number };
+type ChatState = { msgs: ChatMsg[]; loaded: boolean; streaming: Streaming | null; err: string | null; draft: string; lastQuestion: string; shown: number; model: string | null; effort: string | null; pending: Pending[]; lastAttachments: Pending[] };
+let st: ChatState = { msgs: [], loaded: false, streaming: null, err: null, draft: "", lastQuestion: "", shown: 50, model: null, effort: null, pending: [], lastAttachments: [] };
 
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp,application/pdf";
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -47,7 +48,7 @@ function start() {
   if (started) return;
   started = true;
   call<ChatMsg[]>("/chat").then((msgs) => set({ msgs, loaded: true }), (e) => set({ err: (e as Error).message, loaded: true }));
-  call<{ config: { chatModel: string } }>("/config").then((r) => set({ model: r.config.chatModel }), () => undefined);
+  call<{ config: { chat: { model: string; effort?: string } } }>("/config").then((r) => set({ model: r.config.chat.model, effort: r.config.chat.effort ?? null }), () => undefined);
   onChat((ev) => {
     if (ev.type === "message") {
       if (!st.msgs.some((x) => x.id === ev.message.id)) set({ msgs: [...st.msgs, ev.message] });
@@ -57,8 +58,10 @@ function start() {
         if (ev.message.error && !st.draft) set({ draft: st.lastQuestion, pending: st.pending.length ? st.pending : st.lastAttachments });
       }
     } else if (ev.type === "reset") set({ msgs: [], streaming: null, err: null, draft: "", pending: [], lastQuestion: "", lastAttachments: [] });
-    else if (ev.type === "start") set({ streaming: { id: ev.id, text: "" } });
-    else if (ev.type === "delta") set({ streaming: st.streaming && st.streaming.id === ev.id ? { ...st.streaming, text: st.streaming.text + ev.text } : { id: ev.id, text: ev.text } });
+    else if (ev.type === "start") set({ streaming: { id: ev.id, text: "", steps: [], startedAt: st.streaming?.startedAt ?? Date.now() } });
+    else if (ev.type === "delta") set({ streaming: st.streaming && st.streaming.id === ev.id ? { ...st.streaming, text: st.streaming.text + ev.text } : { id: ev.id, text: ev.text, steps: [], startedAt: st.streaming?.startedAt ?? Date.now() } });
+    else if (ev.type === "step" && st.streaming) set({ streaming: { ...st.streaming, steps: [...st.streaming.steps.filter((x) => x.id !== ev.step.id), ev.step] } });
+    else if (ev.type === "step-done" && st.streaming) set({ streaming: { ...st.streaming, steps: st.streaming.steps.map((x) => (x.id === ev.stepId ? { ...x, status: ev.ok ? "done" : "error", output: ev.output } : x)) } });
     else if (ev.type === "error") set({ err: ev.error, streaming: null, draft: st.draft || st.lastQuestion, pending: st.pending.length ? st.pending : st.lastAttachments });
   });
 }
@@ -67,12 +70,110 @@ async function send(text: string, context: string) {
   const q = text.trim();
   if (!q && !st.pending.length) return;
   const sent = st.pending;
-  set({ err: null, draft: "", lastQuestion: q, pending: [], lastAttachments: sent, streaming: { id: "pending", text: "" } });
+  set({ err: null, draft: "", lastQuestion: q, pending: [], lastAttachments: sent, streaming: { id: "pending", text: "", steps: [], startedAt: Date.now() } });
   try {
     await call("/chat", { body: { message: q, context, attachments: sent.map(({ name, type, data }) => ({ name, type, data })) } });
   } catch (e) {
     set({ err: (e as Error).message, streaming: null, draft: q, pending: sent });
   }
+}
+
+/** Grava parte de `chat` na config; o server mescla campo a campo. `null` limpa o esforço. */
+async function setChatConfig(patch: { model?: string; effort?: string | null }) {
+  const prev = { model: st.model, effort: st.effort };
+  set({ ...(patch.model ? { model: patch.model } : {}), ...("effort" in patch ? { effort: patch.effort ?? null } : {}) });
+  try {
+    await call("/config", { method: "PUT", body: { chat: patch } });
+  } catch (e) {
+    set({ ...prev, err: (e as Error).message });
+  }
+}
+
+const MODELS = ["haiku", "sonnet", "opus", "fable"];
+const EFFORTS: { value: string; label: string }[] = [
+  { value: "default", label: "padrão do modelo" },
+  { value: "low", label: "baixo" },
+  { value: "medium", label: "médio" },
+  { value: "high", label: "alto" },
+];
+
+/** Tempo decorrido desde `since`, atualizando a cada segundo. */
+function useElapsed(since: number | null): string | null {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (since == null) return;
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [since]);
+  if (since == null) return null;
+  const s = Math.max(0, Math.floor((Date.now() - since) / 1000));
+  return s < 60 ? `há ${s}s` : `há ${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
+}
+
+/** Ícone por ferramenta do agente. */
+function stepIcon(name: string) {
+  if (name === "Bash") return Terminal;
+  if (name === "Read") return FileText;
+  if (name === "Edit" || name === "Write" || name === "NotebookEdit" || name === "MultiEdit") return PencilSimple;
+  if (name === "Grep" || name === "Glob") return MagnifyingGlass;
+  if (name === "Agent" || name === "Task") return Robot;
+  return Wrench;
+}
+
+function StepRow({ step }: { step: ChatStep }) {
+  const Icon = stepIcon(step.name);
+  const err = step.status === "error";
+  return (
+    <Collapsible className="rounded-lg border">
+      <CollapsibleTrigger className="group flex min-h-11 w-full items-center gap-2 px-2.5 text-left text-xs md:min-h-9">
+        <CaretRight className="size-3 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-90" />
+        {step.status === "running" ? <Spinner className="size-4 shrink-0" /> : <Icon className={`size-4 shrink-0 ${err ? "text-x-error" : "text-muted-foreground"}`} />}
+        <span className={`shrink-0 font-medium ${err ? "text-x-error" : ""}`}>{step.name}</span>
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{step.input}</span>
+        {err && <span className="shrink-0 text-x-error">erro</span>}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-2 border-t px-2.5 py-2 text-xs">
+        <div>
+          <div className="mb-0.5 text-muted-foreground">entrada</div>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">{step.input}</pre>
+        </div>
+        <div>
+          <div className="mb-0.5 text-muted-foreground">saída</div>
+          {step.output != null ? <pre className={`max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono ${err ? "text-x-error" : ""}`}>{step.output || "(vazia)"}</pre> : <span className="text-muted-foreground">em andamento…</span>}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** "N passos" sob a resposta: recolhida no histórico, aberta enquanto a resposta está em curso. */
+function StepList({ steps, live }: { steps: ChatStep[]; live?: boolean }) {
+  if (!steps.length) return null;
+  const errs = steps.filter((x) => x.status === "error").length;
+  return (
+    <Collapsible defaultOpen={live} className="mt-2">
+      <CollapsibleTrigger className="group flex min-h-11 items-center gap-1.5 text-xs text-muted-foreground md:min-h-9">
+        <CaretRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
+        {steps.length} {steps.length === 1 ? "passo" : "passos"}
+        {errs > 0 && <span className="text-x-error">· {errs} com erro</span>}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-1.5">
+        {steps.map((x) => <StepRow key={x.id} step={x} />)}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+/** Indicador da resposta em curso: atividade atual + cronômetro. */
+function LiveStatus({ streaming }: { streaming: Streaming }) {
+  const elapsed = useElapsed(streaming.startedAt);
+  const running = [...streaming.steps].reverse().find((x) => x.status === "running");
+  return (
+    <span className="inline-flex items-center gap-2 text-muted-foreground" data-testid="chat-live">
+      <Spinner /> {running ? running.name : streaming.text ? "respondendo…" : "pensando…"}
+      <span className="text-xs tabular-nums">{elapsed}</span>
+    </span>
+  );
 }
 
 /** Preço na frente (G7): mediana do custo real das últimas respostas. */
@@ -124,6 +225,7 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
   const hidden = s.msgs.length - visible.length;
   const cost = typicalCost(s.msgs);
   const busy = Boolean(s.streaming);
+  const restartPending = useRestartPending();
 
   const attachBtn = (
     <Tooltip>
@@ -194,16 +296,25 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
               ) : (
                 <Markdown source={m.text} measure="reading" />
               )}
+              {m.steps?.length ? <StepList steps={m.steps} /> : null}
               {m.costUSD != null && <div className="mt-1 text-xs text-muted-foreground">custou {usd(m.costUSD, 4)}</div>}
             </div>
           ),
         )}
         {s.streaming && (
           <div className="text-sm">
-            {s.streaming.text ? <Markdown source={s.streaming.text} measure="reading" /> : <span className="inline-flex items-center gap-2 text-muted-foreground"><Spinner /> pensando…</span>}
+            {s.streaming.text && <Markdown source={s.streaming.text} measure="reading" />}
+            <StepList key={s.streaming.id} steps={s.streaming.steps} live />
+            <LiveStatus streaming={s.streaming} />
           </div>
         )}
       </div>
+
+      {restartPending && (
+        <p className="rounded-lg border border-x-alert/40 px-3 py-2 text-xs text-x-alert" role="status" data-testid="chat-restart-banner">
+          O servidor reinicia ao fim desta resposta.
+        </p>
+      )}
 
       {s.err && (
         <ErrorNotice variant="action">
@@ -286,9 +397,22 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
           <InputGroupAddon key="send" align="inline-end" className="m-0 p-0 has-[>button]:m-0">{sendBtn}</InputGroupAddon>
         )}
       </InputGroup>
-      <p className="text-xs text-muted-foreground" data-testid="chat-price">
-        responde com {s.model ?? "…"} · {cost != null ? `~${usd(cost, 2)} por pergunta` : "custo aparece após a primeira resposta"}
-      </p>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="chat-price">
+        <span>responde com</span>
+        <Select value={s.model ?? undefined} onValueChange={(v) => void setChatConfig({ model: v })}>
+          <SelectTrigger size="sm" className="h-11 w-auto gap-1 text-xs md:h-8" aria-label="Modelo do chat"><SelectValue placeholder="…" /></SelectTrigger>
+          <SelectContent>{MODELS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+        </Select>
+        <span>esforço</span>
+        <Select value={s.effort ?? "default"} onValueChange={(v) => void setChatConfig({ effort: v === "default" ? null : v })}>
+          <SelectTrigger size="sm" className="h-11 w-auto gap-1 text-xs md:h-8" aria-label="Esforço do chat"><SelectValue /></SelectTrigger>
+          <SelectContent>{EFFORTS.map((e) => <SelectItem key={e.value} value={e.value}>{e.label}</SelectItem>)}</SelectContent>
+        </Select>
+        <span>· {cost != null ? `~${usd(cost, 2)} por pergunta` : "custo aparece após a primeira resposta"}</span>
+        <Button variant="ghost" size="sm" className="ml-auto h-11 gap-1 text-xs text-muted-foreground md:h-8" disabled={restartPending || !connected} onClick={() => void call("/system/restart", { body: {} }).catch((e) => set({ err: (e as Error).message }))}>
+          <ArrowClockwise /> Reiniciar servidor
+        </Button>
+      </div>
     </div>
   );
 }

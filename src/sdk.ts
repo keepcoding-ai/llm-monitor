@@ -2,8 +2,10 @@
 // Todo widget importa daqui — é o contrato estável entre o shell e as versões.
 import { useSyncExternalStore } from "react";
 import type { Layout, Snapshot } from "../shared/snapshot.ts";
+import type { ChatStep } from "../shared/chat.ts";
 
 export type { Snapshot, Layout } from "../shared/snapshot.ts";
+export type { ChatStep } from "../shared/chat.ts";
 export const BASE = "/llm-monitor";
 export const API = `${BASE}/api/v1`;
 
@@ -11,9 +13,11 @@ export type ChatEvent =
   | { type: "message"; message: ChatMsg }
   | { type: "start"; id: string }
   | { type: "delta"; id: string; text: string }
+  | { type: "step"; id: string; step: ChatStep }
+  | { type: "step-done"; id: string; stepId: string; ok: boolean; output: string }
   | { type: "error"; error: string }
   | { type: "reset" };
-export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: { name: string; type: string; file: string }[] };
+export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: { name: string; type: string; file: string }[]; steps?: ChatStep[] };
 
 type State = {
   snapshot: Snapshot | null;
@@ -22,6 +26,8 @@ type State = {
   progress: { files: number; records: number } | null;
   collectorError: string | null;
   pulseRunning: boolean;
+  /** O server avisou que reinicia ao fim da resposta em curso; zera quando o canal volta do reinício. */
+  restartPending: boolean;
   /** Estado do canal com o serviço: ao vivo, soluço recente (até ~10 s) ou fora do ar. */
   link: Link;
   /** Momento (ms) do último evento recebido do serviço — qualquer evento, inclusive ping. */
@@ -33,7 +39,7 @@ export type Link = "live" | "reconnecting" | "down";
 /** Tempo de soluço tolerado antes de declarar o serviço fora do ar. */
 const GRACE_MS = 10_000;
 
-let state: State = { snapshot: null, layout: null, connected: false, progress: null, collectorError: null, pulseRunning: false, link: "reconnecting", lastEventAt: null, downSince: null };
+let state: State = { snapshot: null, layout: null, connected: false, progress: null, collectorError: null, pulseRunning: false, restartPending: false, link: "reconnecting", lastEventAt: null, downSince: null };
 const subs = new Set<() => void>();
 function set(p: Partial<State>) {
   state = { ...state, ...p };
@@ -104,7 +110,12 @@ export function connect() {
   lastEvent = Date.now();
   const src = new EventSource(`${API}/events`);
   es = src;
-  src.onopen = () => es === src && markLive();
+  src.onopen = () => {
+    if (es !== src) return;
+    // canal de volta depois de ter caído: o server novo nasce sem reinício pendente
+    if (state.restartPending && state.link !== "live") set({ restartPending: false });
+    markLive();
+  };
   src.onerror = () => {
     if (es !== src) return;
     markLost();
@@ -118,12 +129,16 @@ export function connect() {
   };
   src.addEventListener("ping", touch);
   src.onmessage = touch;
-  for (const ev of ["snapshot", "layout", "progress", "pulse", "chat", "widget-test", "collector-error", "proposals"]) src.addEventListener(ev, touch);
+  for (const ev of ["snapshot", "layout", "progress", "pulse", "chat", "system", "widget-test", "collector-error", "proposals"]) src.addEventListener(ev, touch);
   src.addEventListener("snapshot", (e) => set({ snapshot: JSON.parse((e as MessageEvent).data), collectorError: null }));
   src.addEventListener("layout", (e) => set({ layout: JSON.parse((e as MessageEvent).data) }));
   src.addEventListener("progress", (e) => set({ progress: JSON.parse((e as MessageEvent).data) }));
   src.addEventListener("collector-error", (e) => set({ collectorError: JSON.parse((e as MessageEvent).data).error }));
   src.addEventListener("pulse", (e) => set({ pulseRunning: JSON.parse((e as MessageEvent).data).running }));
+  src.addEventListener("system", (e) => {
+    const d = JSON.parse((e as MessageEvent).data) as { restartPending?: boolean };
+    if (typeof d.restartPending === "boolean") set({ restartPending: d.restartPending });
+  });
   src.addEventListener("chat", (e) => {
     const ev = JSON.parse((e as MessageEvent).data) as ChatEvent;
     chatSubs.forEach((f) => f(ev));
@@ -143,6 +158,7 @@ export function reconnectNow() {
 /** Estado do vínculo com o serviço + se o que está em tela é leitura antiga. */
 export const useLink = () => useLive((s) => s.link);
 export const useDownSince = () => useLive((s) => s.downSince);
+export const useRestartPending = () => useLive((s) => s.restartPending);
 export const useStale = () => useLive((s) => s.link !== "live" && s.snapshot != null);
 
 export function useLive<T>(pick: (s: State) => T): T {

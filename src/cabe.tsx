@@ -1,9 +1,9 @@
-// "Cabe?" (plano §4, G2) — fixo no shell, logo após as barras do veredito.
+// "Cabe?" (plano §4, G2) — widget de código (builtin); o card e o título vêm da célula da grade.
 // Toque num preset: a resposta sai na hora (sem LLM) e a estimativa fica
 // registrada para o monitor conferir depois de uma janela.
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Card, CardContent, CardHeader, CardTitle, Skeleton, ToggleGroup, ToggleGroupItem } from "@atrium/core-ui";
+import { Skeleton, ToggleGroup, ToggleGroupItem } from "@atrium/core-ui";
 import { answerCabe } from "../shared/cabe";
 import { call, usd, useSnapshot } from "./sdk";
 
@@ -14,24 +14,16 @@ export function CabeBlock() {
   const [pick, setPick] = useState<string>("");
   if (!s?.cabe)
     return (
-      <Card className="gap-3 py-4">
-        <CardContent className="space-y-2 px-4">
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-9 w-full" />
-        </CardContent>
-      </Card>
+      <div className="space-y-2" aria-busy>
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="h-9 w-full" />
+      </div>
     );
   const c = s.cabe;
   const preset = c.presets.find((p) => p.id === pick) ?? null;
   const ans = preset ? answerCabe(preset.usd, c, s.verdict) : null;
   return (
-    <Card className="gap-3 py-4" aria-labelledby="cabe-title">
-      <CardHeader className="px-4">
-        <CardTitle id="cabe-title" className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Cabe?
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 px-4">
+    <section aria-label="Cabe?" className="flex flex-col gap-3">
         {!c.enoughHistory && (
           <p className="text-sm text-muted-foreground" data-testid="cabe-sem-historico">
             Ainda sem histórico para estimar uma rodada:{" "}
@@ -79,7 +71,6 @@ export function CabeBlock() {
           {c.usdPerPctWeek != null ? `1 % da semana ≈ ${usd(c.usdPerPctWeek, 0)} (aprendido de ${c.pairsWeek} leituras)` : `Ainda sem conversão para % do plano (${c.pairsWeek} de 6 leituras) — por enquanto, só US$.`}
           {c.presets.length > 0 && " · Valores do seu histórico, equivalente API."}
         </p>
-      </CardContent>
-    </Card>
+    </section>
   );
 }

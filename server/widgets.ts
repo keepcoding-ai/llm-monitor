@@ -108,18 +108,14 @@ export function scanCollection(dir: string = WIDGETS_DIR): WidgetMeta[] {
   return out;
 }
 
-/** Só o que é fonte da verdade vai pro disco: collection e span são derivados a cada leitura. */
+/** Só o que é fonte da verdade vai pro disco: a collection é derivada a cada leitura. */
 function toDisk(l: Layout) {
   const { collection: _c, ...rest } = l;
-  return { ...rest, slots: l.slots.map(({ span: _s, ...s }) => s) };
+  return rest;
 }
 
 function withDerived(l: Layout): Layout {
-  return {
-    ...l,
-    collection: scanCollection(),
-    slots: l.slots.map((s) => ({ ...s, span: { md: Math.min(s.w, 2), xl: s.w, tv: s.w } })),
-  };
+  return { ...l, collection: scanCollection() };
 }
 
 export function loadLayout(): Layout {

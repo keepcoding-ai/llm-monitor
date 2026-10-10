@@ -118,8 +118,6 @@ export type SlotSpec = {
   w: 1 | 2 | 3;
   h: 1 | 2 | 3 | 4;
   title?: string;
-  /** preenchido pelo server só para a UI atual (grade antiga) compilar: {md: min(w,2), xl: w, tv: w} */
-  span?: { md: number; xl: number; tv: number };
 };
 export type WidgetMeta = {
   id: string;

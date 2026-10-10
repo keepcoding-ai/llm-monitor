@@ -3,22 +3,19 @@
 import { useSyncExternalStore } from "react";
 import { BASE } from "./sdk";
 
-export type Page = "agora" | "semana" | "reserva" | "ajustes" | "avisos";
-export const PAGES: { id: Page; path: string; label: string }[] = [
-  { id: "agora", path: "/", label: "Agora" },
-  { id: "semana", path: "/semana", label: "Semana" },
-  { id: "reserva", path: "/reserva", label: "Reserva" },
-  { id: "ajustes", path: "/ajustes", label: "Ajustes" },
-  { id: "avisos", path: "/avisos", label: "Avisos" },
-];
+/** Id de página do layout (dinâmico): `agora` = raiz; os demais vêm de `layout.pages`. */
+export type Page = string;
 
-// rotas antigas da página-por-widget → o lugar novo de cada assunto (plano §2)
-const LEGACY: Record<string, string> = { consumo: "/semana", "por-modelo": "/semana", picos: "/semana", "contas-soul": "/reserva", controle: "/ajustes", marcas: "/avisos" };
+// rotas antigas → o lugar novo de cada assunto (a página-por-widget e a "Semana", hoje "Ciclo")
+const LEGACY: Record<string, string> = { consumo: "/ciclo", "por-modelo": "/ciclo", picos: "/ciclo", "contas-soul": "/reserva", controle: "/ajustes", marcas: "/avisos" };
+const RENAMED: Record<string, string> = { semana: "ciclo" };
 
 /** Corrige rotas antigas uma vez, na carga (replace: o endereço velho não fica no histórico). */
 export function fixLegacyRoute() {
-  const m = new RegExp(`^${BASE}/w/([a-z0-9-]+)`).exec(location.pathname);
-  if (m) history.replaceState(null, "", `${BASE}${LEGACY[m[1]] ?? "/"}${location.hash}`);
+  const m = new RegExp(`^${BASE}/(?:w/)?([a-z0-9-]+)`).exec(location.pathname);
+  if (!m) return;
+  const to = location.pathname.startsWith(`${BASE}/w/`) ? LEGACY[m[1]] ?? "/" : RENAMED[m[1]] ? `/${RENAMED[m[1]]}` : null;
+  if (to) history.replaceState(null, "", `${BASE}${to}${location.hash}`);
 }
 
 function sub(f: () => void) {
@@ -31,14 +28,14 @@ function sub(f: () => void) {
 }
 export function usePage(): Page {
   const path = useSyncExternalStore(sub, () => location.pathname);
-  const rest = path.slice(BASE.length).replace(/\/+$/, "") || "/";
-  return PAGES.find((p) => p.path === rest)?.id ?? "agora";
+  const seg = path.slice(BASE.length).split("/")[1] ?? "";
+  return RENAMED[seg] ?? (seg || "agora");
 }
 export function useHash(): string {
   return useSyncExternalStore(sub, () => location.hash.replace(/^#/, ""));
 }
 export function pageHref(p: Page) {
-  return `${BASE}${PAGES.find((x) => x.id === p)!.path}`;
+  return p === "agora" ? `${BASE}/` : `${BASE}/${p}`;
 }
 export function go(p: Page) {
   const to = pageHref(p) + location.hash;

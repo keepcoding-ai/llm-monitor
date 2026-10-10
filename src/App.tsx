@@ -1,125 +1,32 @@
 // Shell do LLM Monitor (plano §2, §7) — sem topbar fixa.
-// Celular/tablet: cabeçalho no fluxo + barra inferior fixa (Agora · Semana · Reserva · Ajustes).
+// Celular/tablet: cabeçalho no fluxo + barra inferior fixa (até 5 itens; o resto em "Mais").
 // Desktop/TV: trilho esquerdo + painel de chat à direita. Nome "LLM Monitor" leva à home em todo tier.
-// Fixo no shell: cabeçalho, navegação, veredito, Cabe?, chat, Ajustes. Vivo: widgets por página.
+// Fixo no shell: cabeçalho, navegação, chat, Ajustes. Vivo: páginas, menu e widgets vêm do layout (grid · single · settings).
 // Detours livres (#): chat (celular/tablet) e versoes/<widget>.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
-  Badge, Button, Card, CardContent, CardHeader, CardTitle,
+  Badge, Button,
   Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription,
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
   ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Skeleton, Spinner, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider,
 } from "@atrium/core-ui";
-import { CalendarBlank, ChatCircleText, ClockCounterClockwise, GearSix, House, Lifebuoy, Warning, X } from "@phosphor-icons/react";
+import { ChatCircleText, ClockCounterClockwise, DotsThree, Warning, X } from "@phosphor-icons/react";
 import { ThemeRoot } from "./theme";
 import { ago, call, connect, useLayout, useLink, useLive, useSnapshot } from "./sdk";
 import { LinkDot, LinkStatus, ServiceDownNotice, useDownTitle } from "./link";
-import { SlotBoundary, TestHarness, useWidget } from "./runtime";
-import { VerdictBlock, useTick } from "./verdict";
+import { TestHarness } from "./runtime";
 import { ChatPanel, NewChatButton } from "./chat";
-import { CabeBlock } from "./cabe";
+import { PageGrid, SlotCard, useSlots } from "./grid";
+import { iconFor } from "./icons";
 import { VerdictNotifier } from "./notify";
 import { PwaNotices } from "./pwa";
 import { BrandSymbol } from "./ui";
 import { AjustesPage } from "./pages/ajustes";
-import { PAGES, fixLegacyRoute, go, pageHref, pref, setHash, setPref, useHash, useMedia, usePage, useTier, type Page } from "./router";
-import type { PageId, SlotSpec, WidgetVersion } from "../shared/snapshot";
+import { fixLegacyRoute, go, pageHref, pref, setHash, setPref, useHash, useMedia, usePage, useTier } from "./router";
+import type { PageDef, WidgetVersion } from "../shared/snapshot";
 
 fixLegacyRoute();
-
-// ------------------------------------------------------------ slot (peça viva)
-
-/** Card de widget sem cromo. Na troca: anel + selo "versão n" por 2,6 s; tocar no selo abre as versões. */
-export function Slot({ spec }: { spec: SlotSpec }) {
-  const { Comp, error } = useWidget(spec.widget, spec.version);
-  const layout = useLayout();
-  const reduce = useReducedMotion();
-  const [fresh, setFresh] = useState(false);
-  const [lastV, setLastV] = useState(spec.version);
-  useEffect(() => {
-    if (spec.version !== lastV) {
-      setLastV(spec.version);
-      setFresh(true);
-    }
-  }, [spec.version, lastV]);
-  // o selo dura 2,6 s (efeito separado: a troca de lastV não pode cancelar o timer)
-  useEffect(() => {
-    if (!fresh) return;
-    const t = setTimeout(() => setFresh(false), 2600);
-    return () => clearTimeout(t);
-  }, [fresh, lastV]);
-  const openVersions = () => setHash(`versoes/${spec.widget}`);
-  return (
-    <motion.section layout={!reduce} transition={{ type: "spring", stiffness: 300, damping: 30 }} data-slot-id={spec.id} className="min-w-0">
-      <Card className={`h-full gap-3 py-4 transition-shadow duration-500 ${fresh ? "ring-2 ring-x-highlight" : ""}`}>
-        <CardHeader className="px-4">
-          <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {spec.title ?? layout?.collection.find((m) => m.id === spec.widget)?.title ?? spec.widget}
-            <AnimatePresence>
-              {fresh && (
-                <motion.button
-                  type="button"
-                  onClick={openVersions}
-                  aria-label={`Versão ${spec.version} entrou no ar — abrir versões`}
-                  initial={{ opacity: 0, scale: 0.8 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
-                >
-                  <Badge tone="info">versão {spec.version}</Badge>
-                </motion.button>
-              )}
-            </AnimatePresence>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="relative px-4">
-          <AnimatePresence mode="popLayout" initial={false}>
-            <motion.div
-              key={spec.version}
-              initial={reduce ? false : { opacity: 0, y: 16, scale: 0.98, filter: "blur(6px)" }}
-              animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
-              exit={reduce ? { opacity: 0 } : { opacity: 0, y: -12, scale: 0.98, filter: "blur(6px)", transition: { duration: 0.2, ease: "easeIn" } }}
-              transition={{ duration: 0.45, ease: "easeOut" }}
-            >
-              {error ? (
-                <ErrorNotice variant="load">
-                  <ErrorNoticeMessage>Esta peça quebrou: {error}</ErrorNoticeMessage>
-                  <ErrorNoticeAction onClick={openVersions}>Versões</ErrorNoticeAction>
-                </ErrorNotice>
-              ) : !Comp ? (
-                <div className="space-y-2">
-                  <Skeleton className="h-6 w-1/2" />
-                  <Skeleton className="h-20 w-full" />
-                </div>
-              ) : (
-                <SlotBoundary
-                  key={spec.version}
-                  fallback={(err, reset) => (
-                    <ErrorNotice variant="load">
-                      <ErrorNoticeMessage>Esta peça quebrou: {err.message}</ErrorNoticeMessage>
-                      <ErrorNoticeAction onClick={reset}>Tentar de novo</ErrorNoticeAction>
-                      <ErrorNoticeAction onClick={openVersions}>Versões</ErrorNoticeAction>
-                    </ErrorNotice>
-                  )}
-                >
-                  <Comp />
-                </SlotBoundary>
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </CardContent>
-      </Card>
-    </motion.section>
-  );
-}
-
-export function useSlots(page: PageId) {
-  const layout = useLayout();
-  // veredito e cabe são componentes de código (builtin): a grade nova os liga; a atual já os desenha à parte
-  const builtin = new Set((layout?.collection ?? []).filter((m) => m.source === "builtin").map((m) => m.id));
-  return (layout?.slots ?? []).filter((s) => s.page === page && !builtin.has(s.widget)).sort((a, b) => a.order - b.order);
-}
 
 // ------------------------------------------------------------ versões (detour livre)
 
@@ -261,42 +168,101 @@ function ChatButton({ open, onToggle }: { open: boolean; onToggle: () => void })
   );
 }
 
-const NAV_ICON: Record<Page, typeof House> = { agora: House, semana: CalendarBlank, reserva: Lifebuoy, ajustes: GearSix, avisos: Warning };
-const NAV = PAGES.filter((p) => p.id !== "avisos");
+/** Páginas do menu, vindas do layout: só `menu: true`, por `order`. */
+function useMenuPages(): PageDef[] {
+  const layout = useLayout();
+  return (layout?.pages ?? []).filter((p) => p.menu).sort((a, b) => a.order - b.order);
+}
+
+const BAR_MAX = 5;
 
 function BottomBar() {
   const page = usePage();
+  const pages = useMenuPages();
+  const [more, setMore] = useState(false);
+  // até 5 itens: passou disso, os 4 primeiros ficam e o resto vai para "Mais"
+  const overflow = pages.length > BAR_MAX;
+  const shown = overflow ? pages.slice(0, BAR_MAX - 1) : pages;
+  const rest = overflow ? pages.slice(BAR_MAX - 1) : [];
+  const restActive = rest.some((p) => p.id === page);
+  const itemCls = (active: boolean) =>
+    `relative flex min-h-14 w-full flex-col items-center justify-center gap-0.5 text-xs outline-none focus-visible:bg-muted md:flex-row md:gap-2 md:text-sm ${active ? "font-medium text-primary" : "text-muted-foreground"}`;
+  const mark = (active: boolean) => active && <motion.span layoutId="nav-active" className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-primary" />;
   return (
-    <nav aria-label="Navegação" className="fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur xl:hidden">
-      <ul className="grid grid-cols-4">
-        {NAV.map((p) => {
-          const Icon = NAV_ICON[p.id];
-          const active = page === p.id;
-          return (
-            <li key={p.id}>
-              <a
-                href={pageHref(p.id)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  go(p.id);
-                }}
-                aria-current={active ? "page" : undefined}
-                className={`relative flex min-h-14 flex-col items-center justify-center gap-0.5 text-xs outline-none focus-visible:bg-muted md:flex-row md:gap-2 md:text-sm ${active ? "font-medium text-primary" : "text-muted-foreground"}`}
-              >
-                {active && <motion.span layoutId="nav-active" className="absolute inset-x-6 top-0 h-0.5 rounded-full bg-primary" />}
-                <Icon className="size-5" weight={active ? "fill" : "regular"} />
-                {p.label}
-              </a>
+    <>
+      <nav aria-label="Navegação" className="fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur xl:hidden">
+        <ul className="grid" style={{ gridTemplateColumns: `repeat(${Math.max(1, shown.length + (overflow ? 1 : 0))}, minmax(0, 1fr))` }}>
+          {shown.map((p) => {
+            const Icon = iconFor(p.icon);
+            const active = page === p.id;
+            return (
+              <li key={p.id}>
+                <a
+                  href={pageHref(p.id)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    go(p.id);
+                  }}
+                  aria-current={active ? "page" : undefined}
+                  className={itemCls(active)}
+                >
+                  {mark(active)}
+                  <Icon className="size-5" weight={active ? "fill" : "regular"} />
+                  {p.title}
+                </a>
+              </li>
+            );
+          })}
+          {overflow && (
+            <li>
+              <button type="button" onClick={() => setMore(true)} aria-haspopup="dialog" aria-expanded={more} className={itemCls(restActive)}>
+                {mark(restActive)}
+                <DotsThree className="size-5" weight="bold" />
+                Mais
+              </button>
             </li>
-          );
-        })}
-      </ul>
-    </nav>
+          )}
+        </ul>
+      </nav>
+      {overflow && (
+        <Drawer open={more} onOpenChange={setMore}>
+          <DrawerContent>
+            <DrawerHeader>
+              <DrawerTitle>Mais páginas</DrawerTitle>
+              <DrawerDescription className="sr-only">Páginas que não cabem na barra inferior.</DrawerDescription>
+            </DrawerHeader>
+            <ul className="flex flex-col gap-1 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              {rest.map((p) => {
+                const Icon = iconFor(p.icon);
+                const active = page === p.id;
+                return (
+                  <li key={p.id}>
+                    <a
+                      href={pageHref(p.id)}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setMore(false);
+                        go(p.id);
+                      }}
+                      aria-current={active ? "page" : undefined}
+                      className={`flex min-h-12 items-center gap-3 rounded-md px-3 text-base outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${active ? "bg-muted font-medium" : ""}`}
+                    >
+                      <Icon className="size-5" weight={active ? "fill" : "regular"} /> {p.title}
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          </DrawerContent>
+        </Drawer>
+      )}
+    </>
   );
 }
 
 function Rail() {
   const page = usePage();
+  const pages = useMenuPages();
   const snap = useSnapshot();
   const v = snap?.verdict;
   const w5 = v?.windows.find((w) => w.id === "5h")?.usedPct;
@@ -305,8 +271,8 @@ function Rail() {
     <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-6 border-r px-4 py-6 xl:flex tv:w-64">
       <HomeMark className="tv:text-xl" />
       <nav className="flex flex-col gap-0.5" aria-label="Navegação">
-        {NAV.map((p) => {
-          const Icon = NAV_ICON[p.id];
+        {pages.map((p) => {
+          const Icon = iconFor(p.icon);
           const active = page === p.id;
           return (
             <a
@@ -320,7 +286,7 @@ function Rail() {
               className={`relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring tv:text-base ${active ? "font-medium text-foreground" : "text-muted-foreground"}`}
             >
               {active && <motion.span layoutId="rail-active" className="absolute inset-0 -z-10 rounded-md bg-muted" />}
-              <Icon className="size-4 tv:size-5" weight={active ? "fill" : "regular"} /> {p.label}
+              <Icon className="size-4 tv:size-5" weight={active ? "fill" : "regular"} /> {p.title}
             </a>
           );
         })}
@@ -338,7 +304,8 @@ function Rail() {
 
 // ------------------------------------------------------------ chat (painel/drawer global)
 
-const CHIPS: Record<Page, (verdict: ReturnType<typeof useSnapshot>) => string[]> = {
+const GENERIC_CHIPS = ["O que mais gastou hoje?", "O que mudar para chegar à renovação com folga?", "Quanto custa uma sessão pesada agora?"];
+const CHIPS: Record<string, (verdict: ReturnType<typeof useSnapshot>) => string[]> = {
   agora: (s) => {
     const v = s?.verdict;
     const d = v?.windows.find((w) => w.id === v.decisive);
@@ -349,13 +316,13 @@ const CHIPS: Record<Page, (verdict: ReturnType<typeof useSnapshot>) => string[]>
       "Quanto custa uma sessão pesada agora?",
     ];
   },
-  semana: () => ["O que mais comeu a semana?", "Onde encaixo uma sessão pesada sem estourar?", "Como esta semana se compara à passada?"],
+  ciclo: () => ["O que mais comeu a semana?", "Onde encaixo uma sessão pesada sem estourar?", "Como esta semana se compara à passada?"],
   reserva: () => ["Qual conta Soul devo usar agora?", "Alguma conta está perto de ficar sem cota?"],
   ajustes: () => ["Qual modelo padrão me faz chegar à renovação?", "Quanto a plataforma gastou hoje e com quê?"],
   avisos: () => ["O que significa o aviso mais recente?", "Algum aviso pede ação minha agora?"],
 };
 
-function chatContext(page: Page, s: ReturnType<typeof useSnapshot>) {
+function chatContext(page: string, s: ReturnType<typeof useSnapshot>) {
   const v = s?.verdict;
   return `tela: ${page}${v ? ` · veredito: ${v.headline}` : ""}`;
 }
@@ -425,7 +392,7 @@ function ChatSidePanel({ tier, onClose }: { tier: "desktop" | "tv"; onClose: () 
         <ChatHeaderActions onClose={onClose} />
       </div>
       <div className="min-h-0 flex-1 p-4">
-        <ChatPanel chips={CHIPS[page](s)} context={chatContext(page, s)} autoFocus />
+        <ChatPanel chips={(CHIPS[page] ?? (() => GENERIC_CHIPS))(s)} context={chatContext(page, s)} autoFocus />
       </div>
     </motion.aside>
   );
@@ -445,7 +412,7 @@ function ChatDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           <ChatHeaderActions onClose={onClose} />
         </DrawerHeader>
         <div className="min-h-0 flex-1 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <ChatPanel chips={CHIPS[page](s)} context={chatContext(page, s)} />
+          <ChatPanel chips={(CHIPS[page] ?? (() => GENERIC_CHIPS))(s)} context={chatContext(page, s)} />
         </div>
       </DrawerContent>
     </Drawer>
@@ -482,55 +449,28 @@ function PageTitle({ children }: { children: ReactNode }) {
   return <h2 className="mb-4 text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>;
 }
 
-// spans por tier — classes estáticas para o Tailwind enxergar
-const MD: Record<number, string> = { 1: "md:col-span-1", 2: "md:col-span-2" };
-const XL: Record<number, string> = { 1: "xl:col-span-1", 2: "xl:col-span-2", 3: "xl:col-span-3" };
-const TVS: Record<number, string> = { 1: "tv:col-span-1", 2: "tv:col-span-2", 3: "tv:col-span-3", 4: "tv:col-span-4" };
-
-function SlotGrid({ page, className, spanned }: { page: PageId; className: string; spanned?: boolean }) {
-  const slots = useSlots(page);
+/** `single`: fluxo em coluna (Reserva, Avisos) — cards na largura toda, altura do conteúdo. */
+function SinglePage({ page }: { page: string }) {
   const layout = useLayout();
-  if (!layout)
-    return (
-      <div className={className}>
-        <Skeleton className="h-40" />
-      </div>
-    );
+  const slots = useSlots(page);
+  if (!layout) return <Skeleton className="h-40" />;
   return (
-    <div className={className}>
-      {slots.map((s) =>
-        spanned ? (
-          <div key={s.id} className={`min-w-0 ${MD[Math.min(s.span?.md ?? 1, 2)]} ${XL[Math.min(s.span?.xl ?? 1, 3)]} ${TVS[Math.min(s.span?.tv ?? 1, 4)]}`}>
-            <Slot spec={s} />
-          </div>
-        ) : (
-          <Slot key={s.id} spec={s} />
-        ),
-      )}
+    <div className="flex flex-col gap-4">
+      {slots.map((s) => (
+        <SlotCard key={s.id} spec={s} />
+      ))}
     </div>
   );
 }
 
-function AgoraPage({ extra }: { extra?: ReactNode }) {
-  return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 tv:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] tv:gap-6">
-      <Card className="gap-3 px-4 py-5 md:col-span-2 md:px-6 tv:col-span-1 tv:px-8 tv:py-8">
-        <VerdictBlock onSettings={() => go("ajustes")} layout="wide" />
-      </Card>
-      <div className="grid grid-cols-1 items-start gap-4 md:col-span-2 md:grid-cols-2 tv:col-span-1 tv:grid-cols-1 tv:content-start">
-        <CabeBlock />
-        {extra}
-        <SlotGrid page="agora" className="flex flex-col gap-4" />
-      </div>
-    </div>
-  );
-}
-
-function SimplePage({ page, title, single }: { page: PageId; title: string; single?: boolean }) {
+/** Despacho por `kind` do layout. */
+function PageView({ def }: { def: PageDef }) {
   return (
     <>
-      <PageTitle>{title}</PageTitle>
-      <SlotGrid page={page} spanned={!single} className={single ? "flex flex-col gap-4" : "grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3 tv:grid-cols-4 tv:gap-6"} />
+      <PageTitle>{def.title}</PageTitle>
+      {def.kind === "grid" && <PageGrid page={def.id} />}
+      {def.kind === "single" && <SinglePage page={def.id} />}
+      {def.kind === "settings" && <AjustesPage />}
     </>
   );
 }
@@ -546,7 +486,11 @@ export function App() {
   // fora do ar: escurece a última leitura (e os esqueletos, que não estão carregando nada)
   const stale = link === "down";
   useDownTitle();
-  const page = usePage();
+  const pageId = usePage();
+  const layout = useLayout();
+  // id desconhecido (ou layout ainda chegando) cai em Agora
+  const def = layout?.pages.find((p) => p.id === pageId) ?? layout?.pages.find((p) => p.id === "agora") ?? layout?.pages[0];
+  const page = def?.id ?? pageId;
   const tier = useTier();
   const wide = tier === "desktop" || tier === "tv";
   const [chatOpen, setChatOpen] = useChatOpen(tier);
@@ -607,16 +551,7 @@ export function App() {
           <div data-stale={stale || undefined} className="stale-fade">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={page} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2, ease: "easeOut" }}>
-              {page === "agora" && <AgoraPage />}
-              {page === "semana" && <SimplePage page="ciclo" title="Semana" />}
-              {page === "reserva" && <SimplePage page="reserva" title="Reserva" single />}
-              {page === "avisos" && <SimplePage page="avisos" title="Avisos" single />}
-              {page === "ajustes" && (
-                <>
-                  <PageTitle>Ajustes</PageTitle>
-                  <AjustesPage />
-                </>
-              )}
+              {def ? <PageView def={def} /> : <Skeleton className="h-40" />}
             </motion.div>
           </AnimatePresence>
           </div>
