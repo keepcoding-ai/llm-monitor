@@ -7,6 +7,7 @@ import { ThemeToggle } from "../theme";
 import { ago, call, modelName, usd, useLayout, useLive, useSnapshot } from "../sdk";
 import { setHash } from "../router";
 import { NotifySetting } from "../notify";
+import { CollectionSummary, MenuAdmin } from "../pages-admin";
 import { AutoAnalysisToggle } from "../auto-analysis";
 import type { PulseRecord } from "../../shared/snapshot";
 
@@ -338,6 +339,12 @@ export function AjustesPage({ extra }: { extra?: ReactNode }) {
         </Section>
       </div>
       <div className="flex flex-col gap-4 @5xl:col-start-2 @[110rem]:col-start-3 @[110rem]:row-start-1">
+        <Section title="Menu" desc="Arraste pela alça para reordenar o menu lateral. Renomear e trocar o ícone valem na hora.">
+          <MenuAdmin />
+        </Section>
+        <Section title="Coleção" desc="Os widgets disponíveis para as páginas. Adicione-os em “Editar página”.">
+          <CollectionSummary />
+        </Section>
         <Versions />
       </div>
     </div>

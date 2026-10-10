@@ -161,6 +161,7 @@ type Act = (fn: () => Promise<unknown>) => void;
 /** Controles da célula em edição: sobrepõem o card (que fica inerte e esmaecido). Alvos de toque de 44 px. */
 function CellControls({ spec, pages, act, handle }: { spec: SlotSpec; pages: PageDef[]; act: Act; handle: ReturnType<typeof useSortable> }) {
   const item = "min-h-11 min-w-11 px-3";
+  const metaTitle = useLayout()?.collection.find((m) => m.id === spec.widget)?.title;
   return (
     <div className="absolute inset-0 z-10 flex flex-col gap-3 overflow-y-auto rounded-xl border-2 border-dashed border-x-highlight bg-background/85 p-3 backdrop-blur-[2px]">
       <div className="flex items-center gap-2">
@@ -174,7 +175,7 @@ function CellControls({ spec, pages, act, handle }: { spec: SlotSpec; pages: Pag
         >
           <DotsSixVertical className="size-6" weight="bold" />
         </button>
-        <span className="min-w-0 truncate text-sm font-medium">{spec.title ?? spec.widget}</span>
+        <span className="min-w-0 truncate text-sm font-medium">{spec.title ?? metaTitle ?? spec.widget}</span>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-2">
@@ -276,6 +277,7 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
     });
   };
   const active = activeId ? slots.find((s) => s.id === activeId) : undefined;
+  const activeTitle = active && (active.title ?? layout?.collection.find((m) => m.id === active.widget)?.title ?? active.widget);
   return (
     <>
       {err && (
@@ -297,7 +299,7 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
             <Card className="h-full justify-center border-2 border-x-highlight px-4 py-4 shadow-xl">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <DotsSixVertical className="size-5 text-muted-foreground" weight="bold" />
-                {active.title ?? active.widget}
+                {activeTitle}
               </div>
             </Card>
           )}
@@ -315,6 +317,12 @@ export function PageGrid({ page, editing = false }: { page: string; editing?: bo
   const style = { gridAutoRows: "calc((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols))" };
   return (
     <div className="@container">
+      {!editing && slots.length === 0 && (
+        <div className="flex flex-col items-center gap-1 rounded-xl border border-dashed p-8 text-center">
+          <p className="text-base font-medium">Página vazia</p>
+          <p className="text-sm text-muted-foreground">Toque em “Editar página” para adicionar widgets.</p>
+        </div>
+      )}
       {editing ? (
         <EditableGrid page={page} slots={slots} className={cls} style={style} />
       ) : (

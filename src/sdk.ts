@@ -1,7 +1,7 @@
 // SDK dos widgets: estado vivo (SSE), chamadas à API e formatação.
 // Todo widget importa daqui — é o contrato estável entre o shell e as versões.
 import { useSyncExternalStore } from "react";
-import type { Layout, SlotSpec, Snapshot } from "../shared/snapshot.ts";
+import type { Layout, PageDef, SlotSpec, Snapshot } from "../shared/snapshot.ts";
 import type { ChatStep } from "../shared/chat.ts";
 
 export type { Snapshot, Layout } from "../shared/snapshot.ts";
@@ -189,6 +189,13 @@ export const updateSlot = (id: string, patch: Partial<Pick<SlotSpec, "w" | "h" |
 export const removeSlot = (id: string) => call<{ ok: true }>(`/slots/${encodeURIComponent(id)}`, { method: "DELETE" });
 export const reorderSlots = (page: string, ids: string[]) =>
   call<{ ok: true }>(`/pages/${encodeURIComponent(page)}/slots/order`, { method: "PUT", body: { ids } });
+
+// páginas: criar, renomear/trocar ícone/menu, apagar (recusa `fixed`) e reordenar o menu (ids = todas as páginas)
+export const createPage = (title: string, icon: string) => call<PageDef>("/pages", { body: { title, icon } });
+export const updatePage = (id: string, patch: Partial<Pick<PageDef, "title" | "icon" | "menu">>) =>
+  call<PageDef>(`/pages/${encodeURIComponent(id)}`, { method: "PATCH", body: patch });
+export const deletePage = (id: string) => call<{ ok: true; removedSlots: number }>(`/pages/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const reorderPages = (ids: string[]) => call<{ ok: true }>("/pages/order", { method: "PUT", body: { ids } });
 
 // ------------------------------------------------------------ formatação
 
