@@ -1,7 +1,7 @@
 // SDK dos widgets: estado vivo (SSE), chamadas à API e formatação.
 // Todo widget importa daqui — é o contrato estável entre o shell e as versões.
 import { useSyncExternalStore } from "react";
-import type { Layout, Snapshot } from "../shared/snapshot.ts";
+import type { Layout, SlotSpec, Snapshot } from "../shared/snapshot.ts";
 import type { ChatStep } from "../shared/chat.ts";
 
 export type { Snapshot, Layout } from "../shared/snapshot.ts";
@@ -178,6 +178,17 @@ export async function call<T = unknown>(path: string, init?: { method?: string; 
   if (!r.ok) throw new Error((data as { error?: string })?.error ?? `HTTP ${r.status}`);
   return data as T;
 }
+
+// ------------------------------------------------------------ montagem das páginas (layout)
+// Toda mutação publica `layout` por SSE; a tela reage a esse evento, não ao retorno.
+
+export const addSlot = (page: string, widget: string, size?: { w?: SlotSpec["w"]; h?: SlotSpec["h"] }) =>
+  call<SlotSpec>(`/pages/${encodeURIComponent(page)}/slots`, { body: { widget, ...size } });
+export const updateSlot = (id: string, patch: Partial<Pick<SlotSpec, "w" | "h" | "page" | "title">>) =>
+  call<SlotSpec>(`/slots/${encodeURIComponent(id)}`, { method: "PATCH", body: patch });
+export const removeSlot = (id: string) => call<{ ok: true }>(`/slots/${encodeURIComponent(id)}`, { method: "DELETE" });
+export const reorderSlots = (page: string, ids: string[]) =>
+  call<{ ok: true }>(`/pages/${encodeURIComponent(page)}/slots/order`, { method: "PUT", body: { ids } });
 
 // ------------------------------------------------------------ formatação
 

@@ -2,7 +2,7 @@
 // Celular/tablet: cabeçalho no fluxo + barra inferior fixa (até 5 itens; o resto em "Mais").
 // Desktop/TV: trilho esquerdo + painel de chat à direita. Nome "LLM Monitor" leva à home em todo tier.
 // Fixo no shell: cabeçalho, navegação, chat, Ajustes. Vivo: páginas, menu e widgets vêm do layout (grid · single · settings).
-// Detours livres (#): chat (celular/tablet) e versoes/<widget>.
+// Detours livres (#): chat (celular/tablet), versoes/<widget> e colecao (widgets que entram na página).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -11,13 +11,14 @@ import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
   ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Skeleton, Spinner, Tooltip, TooltipContent, TooltipTrigger, TooltipProvider,
 } from "@atrium/core-ui";
-import { ChatCircleText, ClockCounterClockwise, DotsThree, Warning, X } from "@phosphor-icons/react";
+import { Check, ChatCircleText, ClockCounterClockwise, DotsThree, PencilSimple, Plus, Warning, X } from "@phosphor-icons/react";
 import { ThemeRoot } from "./theme";
 import { ago, call, connect, useLayout, useLink, useLive, useSnapshot } from "./sdk";
 import { LinkDot, LinkStatus, ServiceDownNotice, useDownTitle } from "./link";
 import { TestHarness } from "./runtime";
 import { ChatPanel, NewChatButton } from "./chat";
 import { PageGrid, SlotCard, useSlots } from "./grid";
+import { CollectionDetour } from "./collection";
 import { iconFor } from "./icons";
 import { VerdictNotifier } from "./notify";
 import { PwaNotices } from "./pwa";
@@ -445,8 +446,29 @@ function useChatOpen(tier: ReturnType<typeof useTier>) {
 
 // ------------------------------------------------------------ páginas
 
-function PageTitle({ children }: { children: ReactNode }) {
-  return <h2 className="mb-4 text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>;
+function PageTitle({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+      <h2 className="text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>
+      {actions}
+    </div>
+  );
+}
+
+/** Só nas páginas `grid`: alterna o modo de edição; em edição oferece a coleção. */
+function EditActions({ editing, onToggle }: { editing: boolean; onToggle: () => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Button variant={editing ? "default" : "outline"} size="sm" className="min-h-11 xl:min-h-9" aria-pressed={editing} onClick={onToggle}>
+        {editing ? <Check /> : <PencilSimple />} {editing ? "Concluir" : "Editar página"}
+      </Button>
+      {editing && (
+        <Button variant="outline" size="sm" className="min-h-11 xl:min-h-9" onClick={() => setHash("colecao")}>
+          <Plus /> Adicionar widget
+        </Button>
+      )}
+    </div>
+  );
 }
 
 /** `single`: fluxo em coluna (Reserva, Avisos) — cards na largura toda, altura do conteúdo. */
@@ -465,10 +487,12 @@ function SinglePage({ page }: { page: string }) {
 
 /** Despacho por `kind` do layout. */
 function PageView({ def }: { def: PageDef }) {
+  // o modo de edição vale só para esta página: a troca de página remonta o componente e ele volta a falso
+  const [editing, setEditing] = useState(false);
   return (
     <>
-      <PageTitle>{def.title}</PageTitle>
-      {def.kind === "grid" && <PageGrid page={def.id} />}
+      <PageTitle actions={def.kind === "grid" ? <EditActions editing={editing} onToggle={() => setEditing(!editing)} /> : undefined}>{def.title}</PageTitle>
+      {def.kind === "grid" && <PageGrid page={def.id} editing={editing} />}
       {def.kind === "single" && <SinglePage page={def.id} />}
       {def.kind === "settings" && <AjustesPage />}
     </>
@@ -561,6 +585,7 @@ export function App() {
       <BottomBar />
       {!wide && <ChatDrawer open={chatOpen} onClose={() => setChatOpen(false)} />}
       <VersionsDetour />
+      <CollectionDetour def={def} />
       <VerdictNotifier />
       <TestHarness />
     </TooltipProvider>
