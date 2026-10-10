@@ -11,10 +11,12 @@
 // importa) → render de teste no navegador (harness oculto, ErrorBoundary) →
 // só então o slot aponta para a versão nova e o cliente anima a entrada.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { APP_ROOT, P, WIDGETS_DIR, appendJsonl, readJson, writeJson } from "./store.ts";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { AGENT_WORK, APP_ROOT, P, STATE, WIDGETS_DIR, appendJsonl, readJson, writeJson } from "./store.ts";
 import { publish, clientCount } from "./bus.ts";
+import { clearFlag, raiseFlag } from "./flags.ts";
 import { ICON_NAMES, type Layout, type PageDef, type SlotSpec, type WidgetMeta, type WidgetVersion } from "../shared/snapshot.ts";
 
 // Revisão do layout: quando muda, pages e slots são refeitos a partir dos defaults
@@ -120,14 +122,23 @@ function withDerived(l: Layout): Layout {
 
 export function loadLayout(): Layout {
   const raw = readJson<(OldLayout & { rev?: number }) | null>(P.layout, null);
-  if (raw && raw.rev === LAYOUT_REV) return withDerived(raw as unknown as Layout);
+  if (raw && raw.rev === LAYOUT_REV) return guarded(withDerived(raw as unknown as Layout));
   if (raw) {
     mkdirSync(P.backups, { recursive: true });
     writeJson(join(P.backups, `layout-rev${raw.rev ?? 0}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`), raw);
   }
   const fresh = migrateLayout(raw, versionsOnDisk);
   writeJson(P.layout, toDisk(fresh));
-  return withDerived(fresh);
+  return guarded(withDerived(fresh));
+}
+
+function guarded(l: Layout): Layout {
+  try {
+    checkImmutability(l);
+  } catch {
+    /* a guarda é aviso: nunca impede o layout de carregar */
+  }
+  return l;
 }
 
 function save(l: Layout) {
@@ -286,6 +297,7 @@ export async function proposeWidget(widget: string, code: string, note: string, 
   const file = join(WIDGETS_DIR, widget, `v${v}.tsx`);
   mkdirSync(join(WIDGETS_DIR, widget), { recursive: true });
   writeFileSync(file, code, "utf8");
+  recordFingerprint(widget, v);
   setVersion(l, widget, v, { status: "checking", note: `${note} (${by})`, at: new Date().toISOString() });
   save(l);
   appendJsonl(P.decisions, [{ at: new Date().toISOString(), kind: "widget-proposed", widget, v, by, note }]);
@@ -331,12 +343,15 @@ export function reportTest(widget: string, v: number, ok: boolean, error?: strin
   pendingTests.delete(key);
   const l = loadLayout();
   if (!ok) {
-    setVersion(l, widget, v, { status: "failed", error: `Render de teste: ${error ?? "falhou"}` });
+    const msg = `Render de teste: ${error ?? "falhou"}`;
+    setVersion(l, widget, v, { status: "failed", error: msg });
     save(l);
+    settleGate(key, { v, status: "failed", error: msg });
     return { applied: false };
   }
   activateVersion(l, widget, v);
   appendJsonl(P.decisions, [{ at: new Date().toISOString(), kind: "widget-swapped", widget, v }]);
+  settleGate(key, { v, status: "active" });
   return { applied: true };
 }
 
@@ -369,4 +384,200 @@ export function restoreWidget(widget: string, v: number) {
   const ver = l.versions[widget]?.find((x) => x.v === v);
   if (!ver || ver.status === "failed" || ver.status === "checking") throw new Error("versão não validada");
   activateVersion(l, widget, v);
+}
+
+// ------------------------------------------------------------ guarda de imutabilidade
+// Versão publicada é imutável. Ao publicar, o disco guarda tamanho + mtime + sha256 de cada
+// versão; ao carregar o layout, versão ativa cujo conteúdo mudou levanta um aviso (flags.ts).
+// Não bloqueia: só deixa a edição no lugar visível.
+
+const FINGERPRINTS = join(STATE, "widget-fingerprints.json");
+type Fingerprint = { size: number; mtimeMs: number; sha256: string };
+const sha256Of = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
+const warned = new Set<string>();
+
+export function recordFingerprint(widget: string, v: number, dir: string = WIDGETS_DIR, store: string = FINGERPRINTS) {
+  const file = join(dir, widget, `v${v}.tsx`);
+  const st = statSync(file);
+  const all = readJson<Record<string, Fingerprint>>(store, {});
+  all[`${widget}@${v}`] = { size: st.size, mtimeMs: st.mtimeMs, sha256: sha256Of(file) };
+  writeJson(store, all);
+}
+
+/** Confere as versões ativas (do layout e dos slots) contra o registro. Devolve as chaves `widget@v` editadas no lugar. */
+export function checkImmutability(l: Layout, dir: string = WIDGETS_DIR, store: string = FINGERPRINTS): string[] {
+  const active = new Set<string>();
+  for (const [w, list] of Object.entries(l.versions)) for (const x of list) if (x.status === "active") active.add(`${w}@${x.v}`);
+  for (const s of l.slots) if (s.version > 0) active.add(`${s.widget}@${s.version}`);
+  const all = readJson<Record<string, Fingerprint>>(store, {});
+  const edited: string[] = [];
+  let dirty = false;
+  for (const key of active) {
+    const [w, v] = key.split("@");
+    const file = join(dir, w, `v${v}.tsx`);
+    if (!existsSync(file)) continue;
+    const st = statSync(file);
+    const fp = all[key];
+    if (!fp || (fp.size === st.size && fp.mtimeMs === st.mtimeMs)) {
+      if (!fp) {
+        all[key] = { size: st.size, mtimeMs: st.mtimeMs, sha256: sha256Of(file) }; // primeira vez que a versão é vista: vira a referência
+        dirty = true;
+      }
+      clearFlag(`widget-edited:${key}`);
+      continue;
+    }
+    const sha = sha256Of(file);
+    if (sha === fp.sha256) {
+      all[key] = { ...fp, size: st.size, mtimeMs: st.mtimeMs }; // só tocado, conteúdo igual
+      dirty = true;
+      clearFlag(`widget-edited:${key}`);
+      continue;
+    }
+    edited.push(key);
+    if (!warned.has(`${key}:${sha}`)) {
+      warned.add(`${key}:${sha}`);
+      raiseFlag({
+        key: `widget-edited:${key}`,
+        kind: "widget-edited-in-place",
+        level: "warning",
+        title: `versão ativa editada no lugar: ${w} v${v}`,
+        detail: `widgets/${w}/v${v}.tsx mudou depois de publicado. Versão publicada é imutável: grave a mudança como versão nova.`,
+      });
+    }
+  }
+  if (dirty) writeJson(store, all);
+  return edited;
+}
+
+// ------------------------------------------------------------ chat cria e modifica widgets
+
+export type PublishOutcome = { v: number; status: "active" | "testing" | "failed"; error?: string };
+export type WidgetDeps = {
+  widgetsDir: string;
+  /** pasta dos rascunhos; caminhos relativos são resolvidos a partir da pasta-mãe (state/agent-work) */
+  draftsDir: string;
+  /** versão nova pelo portão (typecheck + render de teste) */
+  publish: (widget: string, code: string, note: string, by: string) => Promise<PublishOutcome>;
+  /** desfaz um widget que o portão reprovou */
+  discard: (widget: string) => void;
+};
+
+export const GATE_TIMEOUT_MS = 30_000;
+export const NO_BROWSER_MSG = "Typecheck passou, mas nenhum navegador com o monitor aberto pode fazer o render de teste. Abra o monitor no navegador: a versão fica em teste e entra sozinha quando o navegador abrir.";
+const timeoutMsg = (ms: number) => `Typecheck passou, mas o navegador não respondeu ao render de teste em ${Math.round(ms / 1000)} s. A versão fica em teste e entra sozinha quando o navegador responder; confira no painel "Versões".`;
+
+const gateWaiters = new Map<string, (o: PublishOutcome) => void>();
+function settleGate(key: string, o: PublishOutcome) {
+  gateWaiters.get(key)?.(o);
+  gateWaiters.delete(key);
+}
+
+/** proposeWidget + espera pelo resultado do render de teste (com tempo limite; sem navegador, responde na hora). */
+export async function publishThroughGate(widget: string, code: string, note: string, by: string, timeoutMs = GATE_TIMEOUT_MS): Promise<PublishOutcome> {
+  const r = await proposeWidget(widget, code, note, by);
+  if (r.status === "failed") return { v: r.v, status: "failed", error: `Typecheck: ${r.error}` };
+  if (clientCount() === 0) return { v: r.v, status: "testing", error: NO_BROWSER_MSG };
+  const key = `${widget}@${r.v}`;
+  return new Promise((done) => {
+    const timer = setTimeout(() => {
+      gateWaiters.delete(key);
+      done({ v: r.v, status: "testing", error: timeoutMsg(timeoutMs) });
+    }, timeoutMs);
+    gateWaiters.set(key, (o) => {
+      clearTimeout(timer);
+      done(o);
+    });
+  });
+}
+
+/** Apaga os arquivos do widget (manifest e versões); a pasta só sai se ficar vazia. */
+export function removeWidgetFiles(id: string, dir: string = WIDGETS_DIR) {
+  const wd = join(dir, id);
+  if (!existsSync(wd)) return;
+  for (const f of readdirSync(wd)) if (f === "manifest.json" || /^v\d+\.tsx$/.test(f)) unlinkSync(join(wd, f));
+  try {
+    rmdirSync(wd);
+  } catch {
+    /* sobrou arquivo alheio: a pasta fica, sem manifest o widget já não aparece na coleção */
+  }
+}
+
+function discardWidget(id: string) {
+  removeWidgetFiles(id);
+  const l = loadLayout();
+  delete l.versions[id];
+  delete l.history[id];
+  save(l);
+}
+
+const defaultDeps = (): WidgetDeps => ({ widgetsDir: WIDGETS_DIR, draftsDir: join(AGENT_WORK, "drafts"), publish: publishThroughGate, discard: discardWidget });
+
+const WIDGET_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const MAX_DRAFT = 256 * 1024;
+
+/** Lê o rascunho `.tsx`; só aceita caminho real dentro da pasta de rascunhos. Erros em português. */
+export function readDraft(file: string, draftsDir: string): string {
+  mkdirSync(draftsDir, { recursive: true });
+  const inside = (root: string, p: string) => {
+    const rel = relative(root, p);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  };
+  const outside = () => new Error(`o rascunho precisa estar dentro de ${draftsDir}`);
+  const abs = isAbsolute(file) ? file : resolve(dirname(draftsDir), file);
+  if (!inside(draftsDir, abs)) throw outside();
+  let real: string;
+  try {
+    real = realpathSync(abs);
+  } catch {
+    throw new Error(`rascunho não encontrado: ${abs}`);
+  }
+  if (!inside(realpathSync(draftsDir), real)) throw outside();
+  if (!real.endsWith(".tsx")) throw new Error("o rascunho precisa ser um arquivo .tsx");
+  if (statSync(real).size > MAX_DRAFT) throw new Error("rascunho grande demais (máx. 256 KB)");
+  return readFileSync(real, "utf8");
+}
+
+function announce(id: string, title: string, o: PublishOutcome) {
+  publish("chat", { type: "widget", id, v: o.v, status: o.status, title });
+}
+
+export type CreateInput = { id: string; title: string; description?: string; size: WidgetMeta["size"]; file: string };
+
+/** Cria o widget na coleção (manifest + v1) pelo mesmo portão de proposeWidget. Reprovado: nada fica no disco. */
+export async function createWidget(input: CreateInput, deps: WidgetDeps = defaultDeps()): Promise<PublishOutcome & { id: string }> {
+  const { id } = input;
+  const taken = `já existe um widget com o id "${id}"; para mudá-lo, publique uma versão nova`;
+  if (!WIDGET_ID.test(id) || id.length > 40) throw new Error("id inválido: use kebab-case (letras minúsculas, números e hífens), até 40 caracteres");
+  if (existsSync(join(deps.widgetsDir, id))) throw new Error(taken);
+  const code = readDraft(input.file, deps.draftsDir);
+  mkdirSync(deps.widgetsDir, { recursive: true });
+  try {
+    mkdirSync(join(deps.widgetsDir, id)); // sem recursive: dois pedidos simultâneos não criam o mesmo id
+  } catch {
+    throw new Error(taken);
+  }
+  const meta: WidgetMeta = { id, title: input.title, description: input.description ?? "", source: "versioned", size: input.size, createdBy: "chat", createdAt: new Date().toISOString() };
+  writeFileSync(join(deps.widgetsDir, id, "manifest.json"), JSON.stringify(meta, null, 2) + "\n", "utf8");
+  let outcome: PublishOutcome;
+  try {
+    outcome = await deps.publish(id, code, "versão inicial", "chat");
+  } catch (e) {
+    deps.discard(id);
+    throw e;
+  }
+  if (outcome.status === "failed") deps.discard(id);
+  announce(id, input.title, outcome);
+  return { id, ...outcome };
+}
+
+/** Versão seguinte de um widget existente, a partir de um rascunho, pelo mesmo portão. */
+export async function addVersionFromFile(id: string, input: { file: string; note?: string }, deps: WidgetDeps = defaultDeps()): Promise<PublishOutcome & { id: string }> {
+  if (!WIDGET_ID.test(id)) throw new Error("id de widget inválido");
+  const meta = scanCollection(deps.widgetsDir).find((m) => m.id === id);
+  if (!meta) throw new Error("widget não está na coleção");
+  if (meta.source !== "versioned") throw new Error("este widget é embutido no código e não tem versões");
+  const code = readDraft(input.file, deps.draftsDir);
+  const outcome = await deps.publish(id, code, input.note?.trim() || "versão do chat", "chat");
+  announce(id, meta.title, outcome);
+  return { id, ...outcome };
 }

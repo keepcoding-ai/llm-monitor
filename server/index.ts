@@ -20,7 +20,7 @@ import { mergeConfig } from "./config-merge.ts";
 import type { Server } from "node:http";
 import { createPulseScheduler } from "./pulse-schedule.ts";
 import { z } from "zod";
-import { addSlot, createPage, deletePage, deleteSlot, loadLayout, mutateLayout, pendingTestList, proposeWidget, reorderPages, reorderSlots, reportTest, restoreWidget, undoWidget, updatePage, updateSlot } from "./widgets.ts";
+import { addSlot, addVersionFromFile, createPage, createWidget, deletePage, deleteSlot, loadLayout, mutateLayout, pendingTestList, proposeWidget, reorderPages, reorderSlots, reportTest, restoreWidget, undoWidget, updatePage, updateSlot } from "./widgets.ts";
 import { ICON_NAMES } from "../shared/snapshot.ts";
 import type { Snapshot } from "../shared/snapshot.ts";
 
@@ -410,6 +410,32 @@ api.post("/widgets/:id/versions", async (c) => {
     return c.json({ error: (e as Error).message }, 400);
   }
 });
+// o chat cria e versiona widgets a partir de rascunhos em state/agent-work/drafts (docs/widget-guide.md)
+const widgetIdSchema = z.string().min(1, "informe o id do widget");
+const fileSchema = z.string().min(1, "informe o caminho do rascunho (file)");
+
+/** 201 aprovado · 202 render de teste pendente (sem navegador ou sem resposta no prazo) · 422 portão reprovou. */
+async function gateOp<T>(c: Context, schema: z.ZodType<T>, run: (body: T) => Promise<{ status: string; error?: string }>) {
+  const parsed = schema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "corpo inválido" }, 400);
+  try {
+    const out = await run(parsed.data);
+    return c.json(out, out.status === "active" ? 201 : out.status === "testing" ? 202 : 422);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+}
+
+api.post("/widgets", (c) =>
+  gateOp(
+    c,
+    z.object({ id: widgetIdSchema, title: titleSchema, description: z.string().trim().max(300).default(""), size: z.object({ w: wSchema, h: hSchema }), file: fileSchema }),
+    (b) => createWidget(b),
+  ),
+);
+api.post("/widgets/:id/versions/from-file", (c) =>
+  gateOp(c, z.object({ file: fileSchema, note: z.string().trim().max(200).default("") }), (b) => addVersionFromFile(c.req.param("id"), b)),
+);
 api.get("/widgets/:id/versions/:v/source", (c) => {
   const id = c.req.param("id");
   const v = Number(c.req.param("v"));

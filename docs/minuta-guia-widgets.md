@@ -1,5 +1,7 @@
 # MINUTA — guia de widgets (NÃO ligado a prompt)
 
+> Promovida: o guia oficial agora é `docs/widget-guide.md` (o chat o lê). Esta minuta fica como histórico.
+
 > Minuta para o dono decidir. Hoje nenhum prompt de `server/llm.ts` (escalada, linha ~179;
 > chat, linha ~232) lê este arquivo. Ligar = acrescentar uma linha nesses prompts apontando
 > para `docs/minuta-guia-widgets.md` (ou colar o texto). Texto de prompt é decisão do dono.

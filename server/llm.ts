@@ -267,6 +267,22 @@ export function buildChatArgs(cfg: Config["chat"], system: string, sessionId?: s
   return args;
 }
 
+/** Bloco do system do chat sobre criar e mudar widgets (guia completo: docs/widget-guide.md). */
+export function widgetPrompt(port = process.env.LLM_MONITOR_PORT || 4780): string[] {
+  const api = `http://127.0.0.1:${port}/llm-monitor/api/v1`;
+  const drafts = join(AGENT_WORK, "drafts");
+  return [
+    `Widgets e código: você tem acesso total a esta máquina e ao código do monitor (raiz do app: ${APP_ROOT}).`,
+    `Para criar ou mudar um widget, leia ${join(APP_ROOT, "docs", "widget-guide.md")} e escreva o rascunho em ${drafts}/<id>.tsx. Publique com curl na API local (${api}):`,
+    `- widget novo: POST ${api}/widgets com {"id","title","description","size":{"w","h"},"file"}.`,
+    `- widget existente: POST ${api}/widgets/<id>/versions/from-file com {"file","note"}.`,
+    `"file" é o caminho do rascunho, sempre dentro de ${drafts}. Grave o corpo da requisição num arquivo .json nessa mesma pasta e envie com: curl -s -X POST <url> -H "content-type: application/json" -d @${drafts}/<id>.json`,
+    `Leia a resposta e corrija o rascunho até o status voltar "active". Resposta com status "failed" traz o erro do typecheck ou do render de teste; resposta com status "testing" espera um navegador com o monitor aberto, e você avisa o dono disso.`,
+    `Versões publicadas ficam como estão: toda mudança vira versão nova. O widget aprovado fica na coleção; diga ao dono que ele o posiciona nas páginas pelo modo editar.`,
+    `Depois de mudar arquivos em server/**, rode npm run typecheck em ${APP_ROOT} e faça POST ${api}/system/restart (o reinício espera sua resposta terminar). Mudanças em src/** recarregam sozinhas.`,
+  ];
+}
+
 export async function chat(message: string, context?: string, uploads?: ChatUpload[]): Promise<void> {
   if (chatBusy) throw new Error("o chat ainda está respondendo");
   const attachments = saveUploads(uploads);
@@ -288,7 +304,8 @@ export async function chat(message: string, context?: string, uploads?: ChatUplo
     "Você é o chat do LLM Monitor: gestão de custo de LLM do dono (Claude Code e contas Soul) e evolução deste app.",
     "Responda em português, direto, com números. Você tem acesso total ao Claude Code desta máquina (arquivos, shell, rede): faça o que o dono pedir como faria no terminal.",
     `Estado do app (série normalizada, derivados, memória, flags): ${STATE}. Use ${P.derived} para o resumo completo; ${P.series} tem um registro por resposta (pesado: use Grep).`,
-    `Código do app: ${APP_ROOT}. Widgets ficam em widgets/<id>/v<n>.tsx; para propor um widget novo, mostre o código completo.`,
+    `Código do app: ${APP_ROOT}. Widgets ficam em widgets/<id>/v<n>.tsx.`,
+    ...widgetPrompt(),
     "Resumo atual:",
     JSON.stringify(compactSummary(buildSnapshot())),
     ...(context?.trim() ? [`Contexto da tela que o dono está vendo agora (use para entender a pergunta; não repita): ${context.trim()}`] : []),
