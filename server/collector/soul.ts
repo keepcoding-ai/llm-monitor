@@ -10,6 +10,7 @@ import { expandHome, loadConfig } from "../store.ts";
 import { raiseFlag, clearFlag } from "../flags.ts";
 import { addRecords, prices, type UsageRecord } from "../series.ts";
 import { readNewLines, walk } from "./incremental.ts";
+import { commit, newFileIndex, pickChanged, type FileIndex } from "./hotset.ts";
 
 export type SoulAccountView = Omit<PoolAccount, "secretRef">;
 export type SoulPoolView = {
@@ -38,6 +39,8 @@ function sessionRoots(dir: string, extra: string[]): string[] {
   return roots.filter((r) => existsSync(r));
 }
 
+const poolIndexes = new Map<string, FileIndex>();
+
 export async function collectSoul(): Promise<number> {
   const cfg = loadConfig();
   const views: SoulPoolView[] = [];
@@ -58,10 +61,16 @@ export async function collectSoul(): Promise<number> {
       raiseFlag({ key: `soul-pool:${pc.dir}`, kind: "fonte-falhou", level: "error", title: `Pool do Soul ilegível: ${pc.label}`, detail: view.error });
     }
     const account = view.accounts.find((a) => a.isActive)?.label ?? pc.label;
-    const files: string[] = [];
-    for (const r of sessionRoots(dir, pc.sessionRoots)) files.push(...(await walk(r, (n) => n === "usage.jsonl", 6)));
-    view.sessionFiles = files.length;
-    for (const f of files) {
+    let index = poolIndexes.get(pc.dir);
+    if (!index) poolIndexes.set(pc.dir, (index = newFileIndex()));
+    const files = await pickChanged(index, Date.now(), async () => {
+      const all: string[] = [];
+      for (const r of sessionRoots(dir, pc.sessionRoots)) all.push(...(await walk(r, (n) => n === "usage.jsonl", 6)));
+      return all;
+    });
+    view.sessionFiles = index.files.size;
+    for (const c of files) {
+      const f = c.path;
       const rows: UsageRecord[] = [];
       await readNewLines(f, (line) => {
         let j: any;
@@ -97,6 +106,7 @@ export async function collectSoul(): Promise<number> {
         });
       });
       added += addRecords(rows);
+      commit(index, c);
     }
     views.push(view);
   }

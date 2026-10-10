@@ -6,6 +6,7 @@ import { AGENT_WORK, HOME, P, readJson, writeJson } from "../store.ts";
 import { raiseFlag } from "../flags.ts";
 import { addRecords, priceFor, prices, type UsageRecord } from "../series.ts";
 import { readNewLines, walk } from "./incremental.ts";
+import { commit, newFileIndex, pickChanged } from "./hotset.ts";
 
 export const CLAUDE_DIR = join(HOME, ".claude");
 const PROJECTS = join(CLAUDE_DIR, "projects");
@@ -143,14 +144,17 @@ function cmpVer(a: string, b: string): number {
   return 0;
 }
 
+const fileIndex = newFileIndex();
+
 export async function collectClaude(onProgress?: (n: number) => void): Promise<number> {
   const t0 = Date.now();
-  const files = await walk(PROJECTS, (n) => n.endsWith(".jsonl"), 6);
+  const files = await pickChanged(fileIndex, t0, () => walk(PROJECTS, (n) => n.endsWith(".jsonl"), 6));
   const acct = activeClaudeAccount();
   const account = acct?.email ?? "conta não identificada";
   let added = 0;
   let i = 0;
-  for (const f of files) {
+  for (const c of files) {
+    const f = c.path;
     const rows: UsageRecord[] = [];
     await readNewLines(
       f,
@@ -165,6 +169,7 @@ export async function collectClaude(onProgress?: (n: number) => void): Promise<n
         }),
     );
     added += addRecords(rows);
+    commit(fileIndex, c);
     if (++i % 50 === 0) onProgress?.(i);
   }
   if (versionCheckPending) {
@@ -177,7 +182,7 @@ export async function collectClaude(onProgress?: (n: number) => void): Promise<n
     });
     versionCheckPending = null;
   }
-  meta.filesScanned = files.length;
+  meta.filesScanned = fileIndex.files.size;
   meta.lastCycleMs = Date.now() - t0;
   meta.backfillDone = true;
   writeJson(P.collectorMeta, meta);
