@@ -1,0 +1,9 @@
+{
+  "id": "janelas",
+  "title": "Janelas de 5 h",
+  "description": "As sessões de 5 h da semana e onde sobrou folga.",
+  "source": "versioned",
+  "size": { "w": 1, "h": 1 },
+  "createdBy": "system",
+  "createdAt": "2026-10-10T00:00:00.000Z"
+}

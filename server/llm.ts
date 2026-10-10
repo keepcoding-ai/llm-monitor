@@ -4,12 +4,16 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_WORK, APP_ROOT, P, STATE, appendJsonl, loadConfig, readJson, readJsonl, writeJson } from "./store.ts";
+import { AGENT_WORK, APP_ROOT, P, STATE, appendJsonl, expandHome, loadConfig, readJson, readJsonl, writeJson, type Config } from "./store.ts";
+import { killTree } from "./process.ts";
+import { maybeRestart } from "./system.ts";
+import { initialParserState, reduceChatEvent } from "./chat-steps.ts";
+import type { ChatStep } from "../shared/chat.ts";
 import { buildSnapshot, setPulseState } from "./derive.ts";
 import { publish } from "./bus.ts";
 import type { PulseRecord, Snapshot } from "../shared/snapshot.ts";
 
-type RunResult = { ok: boolean; text: string; costUSD: number | null; sessionId?: string; error?: string };
+type RunResult = { ok: boolean; text: string; costUSD: number | null; sessionId?: string; error?: string; timedOut?: boolean };
 
 function claudeBin(): string {
   return process.platform === "win32" ? "claude.exe" : "claude";
@@ -36,13 +40,19 @@ export function budgetGuard(): string | null {
 function runClaude(args: string[], prompt: string, onEvent?: (ev: any) => void, timeoutMs = 240_000, onSpawn?: (kill: () => void) => void): Promise<RunResult> {
   mkdirSync(AGENT_WORK, { recursive: true });
   return new Promise((resolve) => {
-    const child = spawn(claudeBin(), ["-p", ...args], { cwd: AGENT_WORK, env: { ...process.env }, windowsHide: true });
+    // detached fora do Windows: o filho vira líder de grupo e killTree mata o grupo todo
+    const child = spawn(claudeBin(), ["-p", ...args], { cwd: AGENT_WORK, env: { ...process.env }, windowsHide: true, detached: process.platform !== "win32" });
+    let timedOut = false;
+    const kill = () => void killTree(child.pid ?? 0);
     let out = "";
     let err = "";
     let buf = "";
     let result: RunResult = { ok: false, text: "", costUSD: null };
-    const timer = setTimeout(() => child.kill(), timeoutMs);
-    onSpawn?.(() => child.kill());
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill();
+    }, timeoutMs);
+    onSpawn?.(kill);
     child.stdout.on("data", (d) => {
       const s = d.toString();
       out += s;
@@ -76,6 +86,7 @@ function runClaude(args: string[], prompt: string, onEvent?: (ev: any) => void, 
       } catch {
         result = { ok: false, text: out, costUSD: null, error: (err || out || `claude saiu com código ${code}`).slice(0, 800) };
       }
+      if (timedOut) result = { ...result, ok: false, timedOut: true, error: `Tempo limite atingido (${Math.round(timeoutMs / 60_000)} min); a execução foi encerrada.` };
       appendJsonl(P.platformSpend, [{ at: new Date().toISOString(), costUSD: result.costUSD, args: args.filter((a) => !a.startsWith("{")).slice(0, 6) }]);
       resolve(result);
     });
@@ -203,12 +214,14 @@ export async function escalate(rec: PulseRecord): Promise<NonNullable<PulseRecor
 
 // ------------------------------------------------------------ chat
 
-export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: ChatAttachment[] };
+export type ChatMsg = { id: string; role: "user" | "assistant"; text: string; at: string; costUSD?: number | null; error?: string; attachments?: ChatAttachment[]; steps?: ChatStep[] };
 export type ChatAttachment = { name: string; type: string; file: string };
 export type ChatUpload = { name: string; type: string; data: string };
 let chatBusy = false;
 let stopChat: (() => void) | null = null;
 let chatStopped = false;
+
+export const isChatBusy = () => chatBusy;
 
 /** Botão "parar" do chat: encerra a resposta em andamento; o que já chegou fica. */
 export function stopChatRun(): boolean {
@@ -241,10 +254,24 @@ function saveUploads(files: ChatUpload[] = []): ChatAttachment[] {
   });
 }
 
+/** Chat pleno: sem lista de ferramentas e (por config) sem pedir permissão. cwd segue em state/agent-work. */
+export function buildChatArgs(cfg: Config["chat"], system: string, sessionId?: string): string[] {
+  const args = ["--model", cfg.model];
+  if (cfg.effort) args.push("--effort", cfg.effort);
+  args.push("--output-format", "stream-json", "--verbose", "--include-partial-messages");
+  if (cfg.bypassPermissions) args.push("--dangerously-skip-permissions");
+  const dirs = [...new Set([APP_ROOT, ...cfg.dirs.map(expandHome), UPLOADS])];
+  for (const d of dirs) args.push("--add-dir", d);
+  args.push("--append-system-prompt", system);
+  if (sessionId) args.push("--resume", sessionId);
+  return args;
+}
+
 export async function chat(message: string, context?: string, uploads?: ChatUpload[]): Promise<void> {
   if (chatBusy) throw new Error("o chat ainda está respondendo");
   const attachments = saveUploads(uploads);
-  const blocked = budgetGuard();
+  const cfg = loadConfig();
+  const blocked = cfg.chat.ignoreBudget ? null : budgetGuard();
   const userMsg: ChatMsg = { id: crypto.randomUUID(), role: "user", text: message, at: new Date().toISOString(), ...(attachments.length ? { attachments } : {}) };
   appendJsonl(P.chat, [userMsg]);
   publish("chat", { type: "message", message: userMsg });
@@ -256,41 +283,44 @@ export async function chat(message: string, context?: string, uploads?: ChatUplo
     return;
   }
   chatBusy = true;
-  const cfg = loadConfig();
   const sess = readJson<{ sessionId?: string }>(P.chatSession, {});
   const system = [
     "Você é o chat do LLM Monitor: gestão de custo de LLM do dono (Claude Code e contas Soul) e evolução deste app.",
-    "Responda em português, direto, com números. Use as ferramentas de leitura quando precisar de detalhe.",
+    "Responda em português, direto, com números. Você tem acesso total ao Claude Code desta máquina (arquivos, shell, rede): faça o que o dono pedir como faria no terminal.",
     `Estado do app (série normalizada, derivados, memória, flags): ${STATE}. Use ${P.derived} para o resumo completo; ${P.series} tem um registro por resposta (pesado: use Grep).`,
     `Código do app: ${APP_ROOT}. Widgets ficam em widgets/<id>/v<n>.tsx; para propor um widget novo, mostre o código completo.`,
     "Resumo atual:",
     JSON.stringify(compactSummary(buildSnapshot())),
     ...(context?.trim() ? [`Contexto da tela que o dono está vendo agora (use para entender a pergunta; não repita): ${context.trim()}`] : []),
   ].join("\n");
-  const args = ["--model", cfg.chatModel, "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--tools", "Read,Grep,Glob", "--add-dir", APP_ROOT, "--add-dir", UPLOADS, "--append-system-prompt", system];
-  if (sess.sessionId) args.push("--resume", sess.sessionId);
+  const args = buildChatArgs(cfg.chat, system, sess.sessionId);
   publish("chat", { type: "start", id });
-  let text = "";
+  let parser = initialParserState();
   chatStopped = false;
   try {
     const prompt = attachments.length ? `${message}\n\n[Anexos do dono; use a ferramenta Read para vê-los]\n${attachments.map((a) => `- ${a.name}: ${join(UPLOADS, a.file)}`).join("\n")}` : message;
     const res = await runClaude(args, prompt, (ev) => {
-      if (ev.type === "stream_event" && ev.event?.type === "content_block_delta" && ev.event.delta?.type === "text_delta") {
-        text += ev.event.delta.text;
-        publish("chat", { type: "delta", id, text: ev.event.delta.text });
-      }
-    }, undefined, (kill) => (stopChat = kill));
+      const r = reduceChatEvent(parser, ev, id);
+      parser = r.state;
+      for (const e of r.emits) publish("chat", e);
+    }, cfg.chat.timeoutMin * 60_000, (kill) => (stopChat = kill));
+    const text = parser.text;
+    const steps = parser.steps.length ? parser.steps : undefined;
+    // Com passos, o texto é o acumulado de todos os turnos (result.result traz só o último).
+    const finalText = res.ok ? (steps ? text || res.text : res.text || text) : text;
     if (res.sessionId) writeJson(P.chatSession, { sessionId: res.sessionId });
     const m: ChatMsg = chatStopped
       ? { id, role: "assistant", text: text ? `${text}
 
 _(interrompida por você)_` : "", at: new Date().toISOString(), costUSD: res.costUSD, error: text ? undefined : "Resposta interrompida por você antes de começar." }
-      : { id, role: "assistant", text: res.ok ? res.text || text : text, at: new Date().toISOString(), costUSD: res.costUSD, error: res.ok ? undefined : res.error };
+      : { id, role: "assistant", text: finalText, at: new Date().toISOString(), costUSD: res.costUSD, error: res.ok ? undefined : res.error };
+    if (steps) m.steps = steps.map((s) => (s.status === "running" ? { ...s, status: "error" as const, output: s.output ?? "interrompido" } : s));
     appendJsonl(P.chat, [m]);
     publish("chat", { type: "message", message: m });
   } finally {
     chatBusy = false;
     stopChat = null;
+    void maybeRestart();
   }
 }
 

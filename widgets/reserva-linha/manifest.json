@@ -1,0 +1,9 @@
+{
+  "id": "reserva-linha",
+  "title": "Reserva",
+  "description": "Resumo de uma linha da reserva de contas.",
+  "source": "versioned",
+  "size": { "w": 1, "h": 1 },
+  "createdBy": "system",
+  "createdAt": "2026-10-10T00:00:00.000Z"
+}

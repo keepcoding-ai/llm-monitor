@@ -1,5 +1,5 @@
 // LLM Monitor — backend Hono. Prefixo /llm-monitor (UI) e /llm-monitor/api/v1 (API).
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, rmSync } from "node:fs";
@@ -14,9 +14,13 @@ import { buildSnapshot, setPulseState, statuslineMtime } from "./derive.ts";
 import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
 import { writeClaudeDefaults, settingsPath, readClaudeSettings } from "./control.ts";
-import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun } from "./llm.ts";
+import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, resetChat, escalate, stopChatRun, isChatBusy } from "./llm.ts";
+import { configureSystem, closeServer, listenWithRetry } from "./system.ts";
+import type { Server } from "node:http";
 import { createPulseScheduler } from "./pulse-schedule.ts";
-import { loadLayout, pendingTestList, proposeWidget, reportTest, restoreWidget, undoWidget } from "./widgets.ts";
+import { z } from "zod";
+import { addSlot, createPage, deletePage, deleteSlot, loadLayout, mutateLayout, pendingTestList, proposeWidget, reorderPages, reorderSlots, reportTest, restoreWidget, undoWidget, updatePage, updateSlot } from "./widgets.ts";
+import { ICON_NAMES } from "../shared/snapshot.ts";
 import type { Snapshot } from "../shared/snapshot.ts";
 
 const PORT = Number(process.env.LLM_MONITOR_PORT || 4780);
@@ -311,6 +315,87 @@ api.post("/chat/reset", (c) => {
 
 // plataforma viva
 api.get("/layout", (c) => c.json(loadLayout()));
+
+// montagem: coleção, páginas e slots (corpo validado por Zod; erro de regra volta 400 em português)
+const iconSchema = z.enum(ICON_NAMES);
+const wSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
+const hSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+const idList = z.object({ ids: z.array(z.string().min(1)) });
+const titleSchema = z.string().trim().min(1, "informe um título").max(60);
+
+async function layoutOp<T>(c: Context, schema: z.ZodType<T>, run: (body: T) => unknown, status: 200 | 201 = 200) {
+  const parsed = schema.safeParse(await c.req.json().catch(() => null));
+  if (!parsed.success) return c.json({ error: parsed.error.issues[0]?.message ?? "corpo inválido" }, 400);
+  try {
+    return c.json(run(parsed.data) as object, status);
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+}
+
+api.get("/collection", (c) => c.json(loadLayout().collection));
+api.post("/pages", (c) =>
+  layoutOp(
+    c,
+    z.object({ title: titleSchema, icon: iconSchema }),
+    (b) =>
+      mutateLayout("page-created", (l) => {
+        const page = createPage(l, b);
+        return { result: page, detail: { page: page.id, title: page.title } };
+      }),
+    201,
+  ),
+);
+// registrada antes de /pages/:id para "order" nunca ser lido como id
+api.put("/pages/order", (c) =>
+  layoutOp(c, idList, (b) => mutateLayout("pages-reordered", (l) => (reorderPages(l, b.ids), { result: { ok: true }, detail: { ids: b.ids } }))),
+);
+api.patch("/pages/:id", (c) =>
+  layoutOp(c, z.object({ title: titleSchema.optional(), icon: iconSchema.optional(), menu: z.boolean().optional() }), (b) =>
+    mutateLayout("page-updated", (l) => ({ result: updatePage(l, c.req.param("id"), b), detail: { page: c.req.param("id"), ...b } })),
+  ),
+);
+api.delete("/pages/:id", (c) => {
+  try {
+    const removedSlots = mutateLayout("page-deleted", (l) => {
+      const n = deletePage(l, c.req.param("id"));
+      return { result: n, detail: { page: c.req.param("id"), removedSlots: n } };
+    });
+    return c.json({ ok: true, removedSlots });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
+api.put("/pages/:id/slots/order", (c) =>
+  layoutOp(c, idList, (b) =>
+    mutateLayout("slots-reordered", (l) => (reorderSlots(l, c.req.param("id"), b.ids), { result: { ok: true }, detail: { page: c.req.param("id"), ids: b.ids } })),
+  ),
+);
+api.post("/pages/:id/slots", (c) =>
+  layoutOp(
+    c,
+    z.object({ widget: z.string().min(1), w: wSchema.optional(), h: hSchema.optional() }),
+    (b) =>
+      mutateLayout("slot-added", (l) => {
+        const slot = addSlot(l, c.req.param("id"), b);
+        return { result: slot, detail: { slot: slot.id, page: slot.page, widget: slot.widget } };
+      }),
+    201,
+  ),
+);
+api.patch("/slots/:id", (c) =>
+  layoutOp(c, z.object({ w: wSchema.optional(), h: hSchema.optional(), page: z.string().min(1).optional(), title: z.string().max(60).optional() }), (b) =>
+    mutateLayout("slot-updated", (l) => ({ result: updateSlot(l, c.req.param("id"), b), detail: { slot: c.req.param("id"), ...b } })),
+  ),
+);
+api.delete("/slots/:id", (c) => {
+  try {
+    mutateLayout("slot-deleted", (l) => (deleteSlot(l, c.req.param("id")), { result: null, detail: { slot: c.req.param("id") } }));
+    return c.json({ ok: true });
+  } catch (e) {
+    return c.json({ error: (e as Error).message }, 400);
+  }
+});
 api.post("/widgets/:id/versions", async (c) => {
   const { code, note } = (await c.req.json()) as { code: string; note?: string };
   try {
@@ -350,8 +435,13 @@ const app: Hono = new Hono();
 app.route("/llm-monitor/api/v1", api);
 app.get("/", (c) => c.redirect("/llm-monitor/"));
 
-serve({ fetch: app.fetch, port: PORT, hostname: "127.0.0.1" }, () => {
-  console.log(`[llm-monitor] API em http://127.0.0.1:${PORT}/llm-monitor/api/v1 (pid ${process.pid})`);
-  void cycle().then(scheduleCycle);
-  schedulePulse();
+const server = listenWithRetry(() => serve({ fetch: app.fetch, port: PORT, hostname: "127.0.0.1" }) as Server, {
+  port: PORT,
+  hostname: "127.0.0.1",
+  onListening: () => {
+    console.log(`[llm-monitor] API em http://127.0.0.1:${PORT}/llm-monitor/api/v1 (pid ${process.pid})`);
+    void cycle().then(scheduleCycle);
+    schedulePulse();
+  },
 });
+configureSystem({ isIdle: () => !isChatBusy(), closeListener: () => closeServer(server) });

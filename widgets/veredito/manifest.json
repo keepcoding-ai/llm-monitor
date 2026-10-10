@@ -1,0 +1,9 @@
+{
+  "id": "veredito",
+  "title": "Veredito",
+  "description": "A resposta de agora: dá para continuar no ritmo atual?",
+  "source": "builtin",
+  "size": { "w": 2, "h": 1 },
+  "createdBy": "system",
+  "createdAt": "2026-10-10T00:00:00.000Z"
+}

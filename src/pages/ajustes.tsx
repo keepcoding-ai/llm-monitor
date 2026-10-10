@@ -303,11 +303,11 @@ function Versions() {
   return (
     <Section title="Versões dos widgets" desc="As peças vivas do painel. Cada troca passa por conferência de tipos e render de teste antes de entrar no ar; aqui você desfaz ou põe no ar uma versão guardada.">
       <ul className="flex flex-col divide-y">
-        {layout.slots.map((s) => (
+        {layout.slots.filter((s) => layout.collection.find((m) => m.id === s.widget)?.source !== "builtin").map((s) => (
           <li key={s.id} className="flex items-center justify-between gap-3 py-2.5">
             <div className="min-w-0">
-              <div className="truncate text-sm font-medium">{s.title}</div>
-              <div className="text-xs text-muted-foreground">versão {s.version} no ar · {layout.versions[s.widget]?.length ?? 1} guardadas · em {PAGE_NAME[s.page]}</div>
+              <div className="truncate text-sm font-medium">{s.title ?? layout.collection.find((m) => m.id === s.widget)?.title ?? s.widget}</div>
+              <div className="text-xs text-muted-foreground">versão {s.version} no ar · {layout.versions[s.widget]?.length ?? 1} guardadas · em {layout.pages.find((p) => p.id === s.page)?.title ?? s.page}</div>
             </div>
             <Button variant="outline" size="sm" onClick={() => setHash(`versoes/${s.widget}`)}>
               <StackSimple /> Versões
@@ -318,7 +318,6 @@ function Versions() {
     </Section>
   );
 }
-const PAGE_NAME = { agora: "Agora", semana: "Semana", reserva: "Reserva", avisos: "Avisos" } as const;
 
 export function AjustesPage({ extra }: { extra?: ReactNode }) {
   return (

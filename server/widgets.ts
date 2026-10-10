@@ -11,27 +11,42 @@
 // importa) → render de teste no navegador (harness oculto, ErrorBoundary) →
 // só então o slot aponta para a versão nova e o cliente anima a entrada.
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { APP_ROOT, P, WIDGETS_DIR, appendJsonl, readJson, writeJson } from "./store.ts";
 import { publish, clientCount } from "./bus.ts";
-import type { Layout, SlotSpec, WidgetVersion } from "../shared/snapshot.ts";
+import { ICON_NAMES, type Layout, type PageDef, type SlotSpec, type WidgetMeta, type WidgetVersion } from "../shared/snapshot.ts";
 
-// Revisão do layout: quando muda, os slots são refeitos a partir de DEFAULT_SLOTS
-// (histórico e versões de cada widget preservados). page/order dizem onde o widget
-// mora (plano §7); o shell é dono do resto (veredito, Cabe?, chat, Ajustes).
-export const LAYOUT_REV = 4;
-const DEFAULT_SLOTS: Omit<SlotSpec, "version">[] = [
-  { id: "por-que", widget: "por-que", title: "Por quê hoje", page: "agora", order: 10, span: { md: 1, xl: 1, tv: 1 } },
-  { id: "reserva-linha", widget: "reserva-linha", title: "Reserva", page: "agora", order: 20, span: { md: 1, xl: 1, tv: 1 } },
-  { id: "semana-ritmo", widget: "semana-ritmo", title: "Chego na renovação?", page: "semana", order: 10, span: { md: 2, xl: 2, tv: 2 } },
-  { id: "o-que-comeu", widget: "o-que-comeu", title: "O que comeu", page: "semana", order: 20, span: { md: 1, xl: 1, tv: 1 } },
-  { id: "janelas", widget: "janelas", title: "Janelas de 5 h", page: "semana", order: 30, span: { md: 1, xl: 1, tv: 1 } },
-  { id: "reserva", widget: "reserva", title: "Contas", page: "reserva", order: 10, span: { md: 2, xl: 2, tv: 2 } },
-  { id: "avisos", widget: "avisos", title: "Avisos abertos", page: "avisos", order: 10, span: { md: 2, xl: 2, tv: 2 } },
+// Revisão do layout: quando muda, pages e slots são refeitos a partir dos defaults
+// (versions e history preservados; versão ativa de cada widget mantida). A migração é
+// a função pura migrateLayout; loadLayout só faz o I/O (backup antes de gravar).
+export const LAYOUT_REV = 5;
+
+const DEFAULT_PAGES: PageDef[] = [
+  { id: "agora", title: "Agora", icon: "House", order: 10, kind: "grid", menu: true, fixed: true },
+  { id: "ciclo", title: "Ciclo", icon: "ArrowsClockwise", order: 20, kind: "grid", menu: true, fixed: true },
+  { id: "reserva", title: "Reserva", icon: "Lifebuoy", order: 30, kind: "single", menu: true, fixed: true },
+  { id: "ajustes", title: "Ajustes", icon: "GearSix", order: 40, kind: "settings", menu: true, fixed: true },
+  { id: "avisos", title: "Avisos", icon: "Warning", order: 50, kind: "single", menu: false, fixed: true },
 ];
 
-function versionsOnDisk(id: string): number[] {
+type DefaultSlot = { page: string; widget: string; w: SlotSpec["w"]; h: SlotSpec["h"] };
+const DEFAULT_SLOTS: DefaultSlot[] = [
+  { page: "agora", widget: "veredito", w: 2, h: 1 },
+  { page: "agora", widget: "cabe", w: 1, h: 1 },
+  { page: "agora", widget: "semana-ritmo", w: 2, h: 1 },
+  { page: "agora", widget: "o-que-comeu", w: 1, h: 2 },
+  { page: "agora", widget: "janelas", w: 1, h: 1 },
+  { page: "ciclo", widget: "semana-ritmo", w: 3, h: 1 },
+  { page: "ciclo", widget: "o-que-comeu", w: 2, h: 2 },
+  { page: "ciclo", widget: "janelas", w: 1, h: 2 },
+  { page: "reserva", widget: "reserva", w: 3, h: 2 },
+  { page: "avisos", widget: "avisos", w: 3, h: 2 },
+];
+/** Widgets de código (sem v<n>.tsx): não têm versão; o slot guarda 0. */
+const BUILTIN_WIDGETS = new Set(["veredito", "cabe"]);
+
+export function versionsOnDisk(id: string): number[] {
   const dir = join(WIDGETS_DIR, id);
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -41,28 +56,198 @@ function versionsOnDisk(id: string): number[] {
     .sort((a, b) => a - b);
 }
 
-export function loadLayout(): Layout {
-  const l = readJson<Layout | null>(P.layout, null);
-  if (l && l.rev === LAYOUT_REV) return l;
-  const now = new Date().toISOString();
-  const fresh: Layout = { rev: LAYOUT_REV, slots: [], versions: l?.versions ?? {}, history: l?.history ?? {} };
-  for (const s of DEFAULT_SLOTS) {
-    const vs = versionsOnDisk(s.widget);
+/** Layout de uma revisão anterior (só o que a migração lê). */
+type OldLayout = { rev?: number; slots?: { widget: string; version: number }[]; versions?: Layout["versions"]; history?: Layout["history"] };
+
+/** Pura: rev anterior (ou nada) → rev 5 com pages e slots default. `collection` fica vazia (é derivada à parte). */
+export function migrateLayout(old: OldLayout | null, onDisk: (widget: string) => number[], now = new Date().toISOString()): Layout {
+  const prev = old ? structuredClone(old) : null;
+  const fresh: Layout = { rev: LAYOUT_REV, pages: structuredClone(DEFAULT_PAGES), slots: [], collection: [], versions: prev?.versions ?? {}, history: prev?.history ?? {} };
+  for (const d of DEFAULT_SLOTS) {
+    const id = `${d.page}-${d.widget}`;
+    if (BUILTIN_WIDGETS.has(d.widget)) {
+      fresh.slots.push({ id, widget: d.widget, version: 0, page: d.page, order: (fresh.slots.filter((s) => s.page === d.page).length + 1) * 10, w: d.w, h: d.h });
+      continue;
+    }
+    const vs = onDisk(d.widget);
     if (vs.length === 0) continue;
-    const known = fresh.versions[s.widget];
-    const active = known?.find((x) => x.status === "active")?.v ?? vs[vs.length - 1];
-    fresh.slots.push({ ...s, version: active });
-    if (!known) fresh.versions[s.widget] = vs.map((v) => ({ v, status: v === active ? "active" : "retired", at: now, note: "versão inicial" }));
+    const known = fresh.versions[d.widget];
+    const active = prev?.slots?.find((s) => s.widget === d.widget)?.version ?? known?.find((x) => x.status === "active")?.v ?? vs[vs.length - 1];
+    fresh.slots.push({ id, widget: d.widget, version: active, page: d.page, order: (fresh.slots.filter((s) => s.page === d.page).length + 1) * 10, w: d.w, h: d.h });
+    if (!known) fresh.versions[d.widget] = vs.map((v) => ({ v, status: v === active ? "active" : "retired", at: now, note: "versão inicial" }));
     else for (const v of vs) if (!known.some((x) => x.v === v)) known.push({ v, status: v === active ? "active" : "retired", at: now, note: "versão inicial" });
-    if (!fresh.history[s.widget]?.length) fresh.history[s.widget] = [active];
+    if (!fresh.history[d.widget]?.length) fresh.history[d.widget] = [active];
   }
-  writeJson(P.layout, fresh);
   return fresh;
 }
 
+/** Varre widgets/<id>/manifest.json. Widget sem manifest (ou com manifest inválido) fica invisível na coleção. */
+export function scanCollection(dir: string = WIDGETS_DIR): WidgetMeta[] {
+  if (!existsSync(dir)) return [];
+  const out: WidgetMeta[] = [];
+  for (const id of readdirSync(dir).sort()) {
+    const file = join(dir, id, "manifest.json");
+    if (!existsSync(file)) continue;
+    try {
+      const m = JSON.parse(readFileSync(file, "utf8")) as Partial<WidgetMeta>;
+      const okSize = m.size && [1, 2, 3].includes(m.size.w) && [1, 2, 3, 4].includes(m.size.h);
+      if (m.id !== id || !m.title || (m.source !== "versioned" && m.source !== "builtin") || !okSize) continue;
+      out.push({
+        id,
+        title: m.title,
+        description: m.description ?? "",
+        source: m.source,
+        size: m.size!,
+        createdBy: m.createdBy === "owner" || m.createdBy === "chat" ? m.createdBy : "system",
+        createdAt: m.createdAt ?? "",
+      });
+    } catch {
+      /* manifest ilegível: o widget não aparece */
+    }
+  }
+  return out;
+}
+
+/** Só o que é fonte da verdade vai pro disco: collection e span são derivados a cada leitura. */
+function toDisk(l: Layout) {
+  const { collection: _c, ...rest } = l;
+  return { ...rest, slots: l.slots.map(({ span: _s, ...s }) => s) };
+}
+
+function withDerived(l: Layout): Layout {
+  return {
+    ...l,
+    collection: scanCollection(),
+    slots: l.slots.map((s) => ({ ...s, span: { md: Math.min(s.w, 2), xl: s.w, tv: s.w } })),
+  };
+}
+
+export function loadLayout(): Layout {
+  const raw = readJson<(OldLayout & { rev?: number }) | null>(P.layout, null);
+  if (raw && raw.rev === LAYOUT_REV) return withDerived(raw as unknown as Layout);
+  if (raw) {
+    mkdirSync(P.backups, { recursive: true });
+    writeJson(join(P.backups, `layout-rev${raw.rev ?? 0}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`), raw);
+  }
+  const fresh = migrateLayout(raw, versionsOnDisk);
+  writeJson(P.layout, toDisk(fresh));
+  return withDerived(fresh);
+}
+
 function save(l: Layout) {
-  writeJson(P.layout, l);
+  writeJson(P.layout, toDisk(l));
   publish("layout", l);
+}
+
+/** Mutação de layout: carrega, aplica, grava + publica `layout`, registra em decisions.jsonl. */
+export function mutateLayout<T>(kind: string, fn: (l: Layout) => { result: T; detail?: Record<string, unknown> }): T {
+  const l = loadLayout();
+  const { result, detail } = fn(l);
+  save(l);
+  appendJsonl(P.decisions, [{ at: new Date().toISOString(), kind, ...detail }]);
+  return result;
+}
+
+// ------------------------------------------------------------ páginas, slots e coleção
+// Funções puras sobre o objeto layout (mutam o objeto recebido; sem disco). Erros em português.
+
+type Size = { w: SlotSpec["w"]; h: SlotSpec["h"] };
+
+const gridPage = (l: Layout, id: string): PageDef => {
+  const p = l.pages.find((x) => x.id === id);
+  if (!p) throw new Error("página não encontrada");
+  if (p.kind !== "grid") throw new Error("só páginas de grade recebem widgets");
+  return p;
+};
+const endOrder = (l: Layout, page: string) => Math.max(0, ...l.slots.filter((s) => s.page === page).map((s) => s.order)) + 10;
+const sameSet = (a: string[], b: string[]) => a.length === b.length && new Set(a).size === a.length && b.every((x) => a.includes(x));
+
+function slugify(title: string): string {
+  const base = title.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return base || "pagina";
+}
+
+export function createPage(l: Layout, input: { title: string; icon: string }): PageDef {
+  if (!(ICON_NAMES as readonly string[]).includes(input.icon)) throw new Error("ícone inválido");
+  const base = slugify(input.title);
+  let id = base === "order" ? "order-2" : base;
+  for (let n = 2; l.pages.some((p) => p.id === id); n++) id = `${base}-${n}`;
+  const page: PageDef = { id, title: input.title.trim(), icon: input.icon, order: Math.max(0, ...l.pages.map((p) => p.order)) + 10, kind: "grid", menu: true, fixed: false };
+  l.pages.push(page);
+  return page;
+}
+
+export function updatePage(l: Layout, id: string, patch: { title?: string; icon?: string; menu?: boolean }): PageDef {
+  const p = l.pages.find((x) => x.id === id);
+  if (!p) throw new Error("página não encontrada");
+  if (patch.icon !== undefined && !(ICON_NAMES as readonly string[]).includes(patch.icon)) throw new Error("ícone inválido");
+  if (patch.title !== undefined) p.title = patch.title.trim();
+  if (patch.icon !== undefined) p.icon = patch.icon;
+  if (patch.menu !== undefined) p.menu = patch.menu;
+  return p;
+}
+
+export function deletePage(l: Layout, id: string): number {
+  const p = l.pages.find((x) => x.id === id);
+  if (!p) throw new Error("página não encontrada");
+  if (p.fixed) throw new Error("esta página é fixa e não pode ser apagada");
+  const before = l.slots.length;
+  l.slots = l.slots.filter((s) => s.page !== id);
+  l.pages = l.pages.filter((x) => x.id !== id);
+  return before - l.slots.length;
+}
+
+export function reorderPages(l: Layout, ids: string[]) {
+  if (!sameSet(ids, l.pages.map((p) => p.id))) throw new Error("a lista precisa conter exatamente todas as páginas");
+  ids.forEach((id, i) => (l.pages.find((p) => p.id === id)!.order = (i + 1) * 10));
+  l.pages.sort((a, b) => a.order - b.order);
+}
+
+function activeVersion(l: Layout, meta: WidgetMeta): number {
+  if (meta.source === "builtin") return 0;
+  const v = l.versions[meta.id]?.find((x) => x.status === "active")?.v ?? l.history[meta.id]?.at(-1);
+  if (v == null) throw new Error("o widget ainda não tem versão ativa");
+  return v;
+}
+
+export function addSlot(l: Layout, pageId: string, input: { widget: string; w?: SlotSpec["w"]; h?: SlotSpec["h"] }): SlotSpec {
+  gridPage(l, pageId);
+  const meta = l.collection.find((m) => m.id === input.widget);
+  if (!meta) throw new Error("widget fora da coleção");
+  const base = `${pageId}-${meta.id}`;
+  let id = base;
+  for (let n = 2; l.slots.some((s) => s.id === id); n++) id = `${base}-${n}`;
+  const slot: SlotSpec = { id, widget: meta.id, version: activeVersion(l, meta), page: pageId, order: endOrder(l, pageId), w: input.w ?? meta.size.w, h: input.h ?? meta.size.h };
+  l.slots.push(slot);
+  return slot;
+}
+
+export function updateSlot(l: Layout, id: string, patch: Partial<Size> & { page?: string; title?: string }): SlotSpec {
+  const s = l.slots.find((x) => x.id === id);
+  if (!s) throw new Error("slot não encontrado");
+  if (patch.w !== undefined) s.w = patch.w;
+  if (patch.h !== undefined) s.h = patch.h;
+  if (patch.title !== undefined) {
+    if (patch.title.trim()) s.title = patch.title.trim();
+    else delete s.title;
+  }
+  if (patch.page !== undefined && patch.page !== s.page) {
+    gridPage(l, patch.page);
+    s.page = patch.page;
+    s.order = endOrder(l, patch.page);
+  }
+  return s;
+}
+
+export function deleteSlot(l: Layout, id: string) {
+  if (!l.slots.some((s) => s.id === id)) throw new Error("slot não encontrado");
+  l.slots = l.slots.filter((s) => s.id !== id);
+}
+
+export function reorderSlots(l: Layout, pageId: string, ids: string[]) {
+  if (!l.pages.some((p) => p.id === pageId)) throw new Error("página não encontrada");
+  if (!sameSet(ids, l.slots.filter((s) => s.page === pageId).map((s) => s.id))) throw new Error("a lista precisa conter exatamente os slots da página");
+  ids.forEach((id, i) => (l.slots.find((s) => s.id === id)!.order = (i + 1) * 10));
 }
 
 function setVersion(l: Layout, widget: string, v: number, patch: Partial<WidgetVersion>) {
@@ -99,7 +284,7 @@ const pendingTests = new Map<string, { widget: string; v: number; timer: NodeJS.
 export async function proposeWidget(widget: string, code: string, note: string, by: string): Promise<{ v: number; status: string; error?: string }> {
   if (!/^[a-z0-9-]+$/.test(widget)) throw new Error("id de widget inválido");
   const l = loadLayout();
-  if (!l.slots.some((s) => s.widget === widget)) throw new Error("widget não está em nenhum slot");
+  if (!l.collection.some((m) => m.id === widget)) throw new Error("widget não está na coleção (falta o manifest.json)");
   const vs = versionsOnDisk(widget);
   const v = (vs[vs.length - 1] ?? 0) + 1;
   const file = join(WIDGETS_DIR, widget, `v${v}.tsx`);

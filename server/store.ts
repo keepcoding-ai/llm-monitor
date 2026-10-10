@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendF
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 
 export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const STATE = join(APP_ROOT, "state");
@@ -79,10 +80,24 @@ export function readJsonl<T>(path: string): T[] {
 // ---------------------------------------------------------------- config
 
 export type SoulPoolConfig = { dir: string; label: string; sessionRoots: string[] };
+
+/** Chat pleno: poder total sobre o Claude Code da máquina (decisão do dono). Só o chat; pulso e escalada seguem restritos. */
+export const ChatConfigSchema = z.object({
+  model: z.string().default("haiku"),
+  effort: z.string().optional(),
+  bypassPermissions: z.boolean().default(true),
+  dirs: z.array(z.string()).default(["D:/atrium"]),
+  timeoutMin: z.number().positive().default(60),
+  ignoreBudget: z.boolean().default(true),
+});
+export type ChatConfig = z.infer<typeof ChatConfigSchema>;
+
 export type Config = {
   collectIntervalSec: number;
   soulPools: SoulPoolConfig[];
   pulse: { enabled: boolean; everyMinutes: number; model: string; autoEscalate: boolean };
+  chat: ChatConfig;
+  /** Espelho somente-leitura de chat.model, para o front antigo que ainda lê `chatModel`. */
   chatModel: string;
   platformDailyBudgetUSD: number;
 };
@@ -91,13 +106,21 @@ export const DEFAULT_CONFIG: Config = {
   collectIntervalSec: 15,
   soulPools: [{ dir: "~/.soul", label: "Soul (padrão)", sessionRoots: [] }],
   pulse: { enabled: true, everyMinutes: 60, model: "haiku", autoEscalate: false },
+  chat: ChatConfigSchema.parse({}),
   chatModel: "haiku",
   platformDailyBudgetUSD: 2,
 };
 
+/** Normaliza a config crua do disco. Config antiga (só `chatModel`) migra para `chat.model`. */
+export function parseConfig(raw: Record<string, any>): Config {
+  const legacyModel = typeof raw.chatModel === "string" ? raw.chatModel : undefined;
+  const rawChat = raw.chat && typeof raw.chat === "object" ? raw.chat : {};
+  const chat = ChatConfigSchema.parse({ ...(legacyModel && !rawChat.model ? { model: legacyModel } : {}), ...rawChat });
+  return { ...DEFAULT_CONFIG, ...raw, pulse: { ...DEFAULT_CONFIG.pulse, ...(raw.pulse ?? {}) }, chat, chatModel: chat.model };
+}
+
 export function loadConfig(): Config {
-  const c = readJson<Partial<Config>>(P.config, {});
-  return { ...DEFAULT_CONFIG, ...c, pulse: { ...DEFAULT_CONFIG.pulse, ...(c.pulse ?? {}) } };
+  return parseConfig(readJson<Record<string, any>>(P.config, {}));
 }
 
 /** Semeia os arquivos de estado na primeira subida (nunca sobrescreve). */

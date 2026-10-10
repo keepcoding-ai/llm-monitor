@@ -1,0 +1,9 @@
+{
+  "id": "cabe",
+  "title": "Cabe?",
+  "description": "Simula se uma tarefa cabe no que resta da sessão e da semana.",
+  "source": "builtin",
+  "size": { "w": 1, "h": 1 },
+  "createdBy": "system",
+  "createdAt": "2026-10-10T00:00:00.000Z"
+}

@@ -104,6 +104,39 @@ export type PulseRecord = {
 };
 
 export type WidgetVersion = { v: number; status: "active" | "testing" | "failed" | "retired" | "checking"; at: string; note: string; error?: string };
-export type PageId = "agora" | "semana" | "reserva" | "avisos";
-export type SlotSpec = { id: string; widget: string; version: number; span: { md: number; xl: number; tv: number }; title: string; page: PageId; order: number };
-export type Layout = { rev?: number; slots: SlotSpec[]; versions: Record<string, WidgetVersion[]>; history: Record<string, number[]> };
+export type PageKind = "grid" | "single" | "settings";
+export type PageDef = { id: string; title: string; /** nome de ícone Phosphor (lista fechada em ICON_NAMES) */ icon: string; order: number; kind: PageKind; menu: boolean; fixed: boolean };
+export type PageId = string;
+export const ICON_NAMES = ["House", "ArrowsClockwise", "Lifebuoy", "GearSix", "Warning", "ChartBar", "Gauge", "Lightning", "Folder", "Star", "Clock", "Coins"] as const;
+
+export type SlotSpec = {
+  id: string;
+  widget: string;
+  version: number;
+  page: string;
+  order: number;
+  w: 1 | 2 | 3;
+  h: 1 | 2 | 3 | 4;
+  title?: string;
+  /** preenchido pelo server só para a UI atual (grade antiga) compilar: {md: min(w,2), xl: w, tv: w} */
+  span?: { md: number; xl: number; tv: number };
+};
+export type WidgetMeta = {
+  id: string;
+  title: string;
+  description: string;
+  /** versioned: widgets/<id>/v<n>.tsx · builtin: componente de código ligado ao shell */
+  source: "versioned" | "builtin";
+  size: { w: 1 | 2 | 3; h: 1 | 2 | 3 | 4 };
+  createdBy: "system" | "owner" | "chat";
+  createdAt: string;
+};
+export type Layout = {
+  rev: 5;
+  pages: PageDef[];
+  slots: SlotSpec[];
+  /** derivada de widgets/<id>/manifest.json (scanCollection); não é gravada em disco */
+  collection: WidgetMeta[];
+  versions: Record<string, WidgetVersion[]>;
+  history: Record<string, number[]>;
+};

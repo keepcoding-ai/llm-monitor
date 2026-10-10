@@ -202,7 +202,7 @@ function buildSemana(v: Verdict, history: Reading[], cc28: UsageRecord[], cabe: 
     lastWeekCost: lastWeek,
     byFamily: share(group(wk, (r) => family(r.model), 6)),
     sideShare: cost ? side / cost : 0,
-    byProject: share(group(wk, (r) => r.project, 4)),
+    byProject: share(group(wk, (r) => r.project, 10)),
     windows: wins,
     slackBelow,
   };
@@ -336,7 +336,7 @@ export function buildSnapshot(): Snapshot {
     byModel,
     byModelWeek: group(r7, (r) => r.model),
     byProject: group(r7, (r) => r.project, 10),
-    byProjectToday: group(rToday.filter((r) => r.source === "claude-code"), (r) => r.project, 5),
+    byProjectToday: group(rToday.filter((r) => r.source === "claude-code"), (r) => r.project, 10),
     byAccount: group(r7, (r) => `${r.source === "soul" ? "Soul" : "Claude Code"} · ${r.account}`, 10),
     sidechainToday: { cost: sideCost, share: today.cost ? sideCost / today.cost : 0, opusShare: today.cost ? sideOpus / today.cost : 0 },
     heatmap: heat,

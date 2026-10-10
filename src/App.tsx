@@ -33,6 +33,7 @@ fixLegacyRoute();
 /** Card de widget sem cromo. Na troca: anel + selo "versão n" por 2,6 s; tocar no selo abre as versões. */
 export function Slot({ spec }: { spec: SlotSpec }) {
   const { Comp, error } = useWidget(spec.widget, spec.version);
+  const layout = useLayout();
   const reduce = useReducedMotion();
   const [fresh, setFresh] = useState(false);
   const [lastV, setLastV] = useState(spec.version);
@@ -54,7 +55,7 @@ export function Slot({ spec }: { spec: SlotSpec }) {
       <Card className={`h-full gap-3 py-4 transition-shadow duration-500 ${fresh ? "ring-2 ring-x-highlight" : ""}`}>
         <CardHeader className="px-4">
           <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {spec.title}
+            {spec.title ?? layout?.collection.find((m) => m.id === spec.widget)?.title ?? spec.widget}
             <AnimatePresence>
               {fresh && (
                 <motion.button
@@ -115,7 +116,9 @@ export function Slot({ spec }: { spec: SlotSpec }) {
 
 export function useSlots(page: PageId) {
   const layout = useLayout();
-  return (layout?.slots ?? []).filter((s) => s.page === page).sort((a, b) => a.order - b.order);
+  // veredito e cabe são componentes de código (builtin): a grade nova os liga; a atual já os desenha à parte
+  const builtin = new Set((layout?.collection ?? []).filter((m) => m.source === "builtin").map((m) => m.id));
+  return (layout?.slots ?? []).filter((s) => s.page === page && !builtin.has(s.widget)).sort((a, b) => a.order - b.order);
 }
 
 // ------------------------------------------------------------ versões (detour livre)
@@ -183,7 +186,7 @@ function VersionsDetour() {
   const widget = /^versoes\/([a-z0-9-]+)/.exec(hash)?.[1] ?? null;
   const open = Boolean(widget);
   const close = (o: boolean) => !o && setHash("");
-  const title = widget ? `Versões — ${layout?.slots.find((s) => s.widget === widget)?.title ?? widget}` : "Versões";
+  const title = widget ? `Versões — ${layout?.collection.find((m) => m.id === widget)?.title ?? widget}` : "Versões";
   const desc = "Cada troca passa por conferência de tipos e render de teste antes de entrar no ar.";
   if (desktop)
     return (
@@ -497,7 +500,7 @@ function SlotGrid({ page, className, spanned }: { page: PageId; className: strin
     <div className={className}>
       {slots.map((s) =>
         spanned ? (
-          <div key={s.id} className={`min-w-0 ${MD[Math.min(s.span.md, 2)]} ${XL[Math.min(s.span.xl, 3)]} ${TVS[Math.min(s.span.tv, 4)]}`}>
+          <div key={s.id} className={`min-w-0 ${MD[Math.min(s.span?.md ?? 1, 2)]} ${XL[Math.min(s.span?.xl ?? 1, 3)]} ${TVS[Math.min(s.span?.tv ?? 1, 4)]}`}>
             <Slot spec={s} />
           </div>
         ) : (
@@ -605,7 +608,7 @@ export function App() {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={page} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.2, ease: "easeOut" }}>
               {page === "agora" && <AgoraPage />}
-              {page === "semana" && <SimplePage page="semana" title="Semana" />}
+              {page === "semana" && <SimplePage page="ciclo" title="Semana" />}
               {page === "reserva" && <SimplePage page="reserva" title="Reserva" single />}
               {page === "avisos" && <SimplePage page="avisos" title="Avisos" single />}
               {page === "ajustes" && (
