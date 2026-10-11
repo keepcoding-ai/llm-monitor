@@ -1,12 +1,16 @@
-// Grade das páginas `grid`: células quadradas de tamanho igual, só em CSS.
+// Grade das páginas `grid`: colunas iguais e linhas de meia altura, só em CSS.
 // 1 coluna; 2 a partir de @2xl; 3 a partir de @5xl — container query (não media query), então o
 // painel de chat aberto, que estreita o <main>, reduz as colunas sozinho.
-// `grid-auto-rows` = largura de uma coluna ⇒ célula 1×1 é quadrada; w/h multiplicam (com os gaps).
+// `grid-auto-rows` = meia coluna menos meio gap ⇒ 2 linhas + 1 gap = largura da coluna: célula 1×2 é quadrada.
+// h vai de 1 a 8 meias-linhas; w/h multiplicam (com os gaps).
 import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
-import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
-import { SortableContext, arrayMove, rectSortingStrategy, sortableKeyboardCoordinates, useSortable } from "@dnd-kit/sortable";
+import {
+  DndContext, DragOverlay, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, pointerWithin, useSensor, useSensors,
+  type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent,
+} from "@dnd-kit/core";
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, type SortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ArrowsOutCardinal, DotsSixVertical, Trash } from "@phosphor-icons/react";
+import { ArrowsOutCardinal, DotsSixVertical, Minus, Plus, Trash } from "@phosphor-icons/react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Badge, Button, Card, CardContent, CardHeader, CardTitle, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
@@ -30,7 +34,8 @@ const COL: Record<SlotSpec["w"], string> = {
   2: "col-span-1 @2xl:col-span-2",
   3: "col-span-1 @2xl:col-span-2 @5xl:col-span-3",
 };
-const ROW: Record<SlotSpec["h"], string> = { 1: "row-span-1", 2: "row-span-2", 3: "row-span-3", 4: "row-span-4" };
+const ROW: Record<SlotSpec["h"], string> = { 1: "row-span-1", 2: "row-span-2", 3: "row-span-3", 4: "row-span-4", 5: "row-span-5", 6: "row-span-6", 7: "row-span-7", 8: "row-span-8" };
+const MAX_H = 8;
 const spanCls = (spec: SlotSpec) => `min-h-0 min-w-0 ${COL[spec.w] ?? COL[1]} ${ROW[spec.h] ?? ROW[1]}`;
 
 // ------------------------------------------------------------ corpo do slot
@@ -126,10 +131,11 @@ export function SlotCard({ spec, cell, still }: { spec: SlotSpec; cell?: boolean
             </AnimatePresence>
           </CardTitle>
         </CardHeader>
-        <CardContent className={`relative px-4 ${cell ? "@container min-h-0 flex-1 overflow-y-auto overscroll-contain" : ""}`}>
+        <CardContent className={`relative px-4 ${cell ? "@container [container-type:size] min-h-0 flex-1 overflow-y-auto overscroll-contain" : ""}`}>
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
               key={spec.version}
+              className={cell ? "h-full" : undefined}
               initial={reduce ? false : { opacity: 0, y: 16, scale: 0.98, filter: "blur(6px)" }}
               animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -12, scale: 0.98, filter: "blur(6px)", transition: { duration: 0.2, ease: "easeIn" } }}
@@ -190,13 +196,17 @@ function CellControls({ spec, pages, act, handle }: { spec: SlotSpec; pages: Pag
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Altura</span>
-          <ToggleGroup type="single" variant="outline" value={String(spec.h)} onValueChange={(v) => v && act(() => updateSlot(spec.id, { h: Number(v) as SlotSpec["h"] }))} aria-label="Altura">
-            {[1, 2, 3, 4].map((n) => (
-              <ToggleGroupItem key={n} value={String(n)} className={item} aria-label={`Altura ${n}`}>
-                {n}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
+          <div role="group" aria-label="Altura" className="flex items-center">
+            <Button variant="outline" size="icon" className="size-11 rounded-r-none" aria-label="Diminuir a altura" disabled={spec.h <= 1} onClick={() => act(() => updateSlot(spec.id, { h: (spec.h - 1) as SlotSpec["h"] }))}>
+              <Minus />
+            </Button>
+            <output className="tabular flex h-11 min-w-9 items-center justify-center border-y bg-card px-2 text-sm font-medium" aria-label={`Altura ${spec.h} de ${MAX_H}`}>
+              {spec.h}
+            </output>
+            <Button variant="outline" size="icon" className="size-11 rounded-l-none" aria-label="Aumentar a altura" disabled={spec.h >= MAX_H} onClick={() => act(() => updateSlot(spec.id, { h: (spec.h + 1) as SlotSpec["h"] }))}>
+              <Plus />
+            </Button>
+          </div>
         </div>
       </div>
       <div className="mt-auto flex flex-wrap gap-2">
@@ -223,11 +233,19 @@ function CellControls({ spec, pages, act, handle }: { spec: SlotSpec; pages: Pag
   );
 }
 
+// Células têm tamanhos diferentes: nenhuma estratégia do dnd-kit sabe prever o reencaixe da grade.
+// Então ninguém é deslocado por transform — a ordem muda de verdade durante o arrasto, a grade CSS
+// reflui e o dnd-kit só anima cada célula do lugar antigo para o novo.
+const noDisplacement: SortingStrategy = () => null;
+// O alvo é a célula sob o ponteiro (a alça fica no canto, longe do centro do card); teclado não tem ponteiro.
+const underPointer: CollisionDetection = (args) => (args.pointerCoordinates ? pointerWithin(args) : closestCenter(args));
+
 function EditableCell({ spec, pages, act }: { spec: SlotSpec; pages: PageDef[]; act: Act }) {
-  const sortable = useSortable({ id: spec.id });
+  const reduce = useReducedMotion();
+  const sortable = useSortable({ id: spec.id, transition: reduce ? null : { duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" } });
   const { setNodeRef, transform, transition, isDragging } = sortable;
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }} className={`relative ${spanCls(spec)} ${isDragging ? "z-20 opacity-40" : ""}`}>
+    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={`relative ${spanCls(spec)} ${isDragging ? "z-20 opacity-40" : ""}`}>
       <div inert className="h-full select-none opacity-60">
         <SlotCard spec={spec} cell still />
       </div>
@@ -243,16 +261,19 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const passed = useRef<string | null>(null);
+  const settle = useRef(0);
+  const seq = useRef(0);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const realKey = slots.map((s) => s.id).join();
-  // a ordem otimista cai quando o layout publicado a alcança (ou, por garantia, em 3 s)
+  // a ordem otimista cai quando o layout publicado a alcança (ou, por garantia, 3 s depois de a rota responder)
   useEffect(() => {
-    if (pending && pending.join() === realKey) setPending(null);
-  }, [pending, realKey]);
+    if (!activeId && pending && pending.join() === realKey) setPending(null);
+  }, [activeId, pending, realKey]);
   useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
   const ordered = pending ? pending.map((id) => slots.find((s) => s.id === id)).filter((s): s is SlotSpec => Boolean(s)) : slots;
   const ids = ordered.map((s) => s.id);
@@ -261,20 +282,50 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
     setErr(null);
     fn().catch((e: Error) => setErr(e.message));
   };
-  const onEnd = (e: DragEndEvent) => {
+  const onStart = (e: DragStartEvent) => {
+    if (timer.current) clearTimeout(timer.current);
+    seq.current++;
+    passed.current = null;
+    setActiveId(String(e.active.id));
+  };
+  // Reordena ao vivo: o card arrastado assume o lugar da célula sob o ponteiro e a grade reflui.
+  // `passed` evita o vai-e-volta quando a célula ultrapassada continua sob o ponteiro depois do refluxo;
+  // `settle` espera a animação do refluxo antes de aceitar outra troca.
+  const onMove = ({ active, over }: DragMoveEvent) => {
+    if (!over) return;
+    const a = String(active.id);
+    const o = String(over.id);
+    if (o === a) return void (passed.current = null);
+    if (o === passed.current || performance.now() < settle.current) return;
+    const from = ids.indexOf(a);
+    const to = ids.indexOf(o);
+    if (from < 0 || to < 0) return;
+    passed.current = o;
+    settle.current = performance.now() + 240;
+    setPending(arrayMove(ids, from, to));
+  };
+  const onCancel = () => {
     setActiveId(null);
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-    const next = arrayMove(ids, ids.indexOf(String(active.id)), ids.indexOf(String(over.id)));
-    setPending(next);
+    setPending(null);
+  };
+  const onEnd = (_e: DragEndEvent) => {
+    setActiveId(null);
+    const next = ids;
+    if (next.join() === realKey) return setPending(null);
     setErr(null);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => setPending(null), 3000);
-    reorderSlots(page, next).catch((er: Error) => {
-      if (timer.current) clearTimeout(timer.current);
-      setPending(null);
-      setErr(`Não consegui salvar a nova ordem: ${er.message}`);
-    });
+    // a ordem otimista fica até a rota responder, por mais que demore; só a resposta arma a garantia de 3 s
+    const mine = ++seq.current;
+    reorderSlots(page, next).then(
+      () => {
+        if (mine === seq.current) timer.current = setTimeout(() => setPending(null), 3000);
+      },
+      (er: Error) => {
+        if (mine !== seq.current) return;
+        setPending(null);
+        setErr(`Não consegui salvar a nova ordem: ${er.message}`);
+      },
+    );
   };
   const active = activeId ? slots.find((s) => s.id === activeId) : undefined;
   const activeTitle = active && (active.title ?? layout?.collection.find((m) => m.id === active.widget)?.title ?? active.widget);
@@ -286,8 +337,8 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
         </ErrorNotice>
       )}
       {ordered.length === 0 && <p className="mb-4 text-sm text-muted-foreground">Esta página está vazia. Use “Adicionar widget” para trazer peças da coleção.</p>}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={(e: DragStartEvent) => setActiveId(String(e.active.id))} onDragEnd={onEnd} onDragCancel={() => setActiveId(null)}>
-        <SortableContext items={ids} strategy={rectSortingStrategy}>
+      <DndContext sensors={sensors} collisionDetection={underPointer} onDragStart={onStart} onDragMove={onMove} onDragOver={onMove} onDragEnd={onEnd} onDragCancel={onCancel}>
+        <SortableContext items={ids} strategy={noDisplacement}>
           <div className={className} style={style}>
             {ordered.map((s) => (
               <EditableCell key={s.id} spec={s} pages={others} act={act} />
@@ -296,7 +347,7 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
         </SortableContext>
         <DragOverlay>
           {active && (
-            <Card className="h-full justify-center border-2 border-x-highlight px-4 py-4 shadow-xl">
+            <Card className="w-fit max-w-full cursor-grabbing border-2 border-x-highlight px-4 py-3 shadow-xl">
               <div className="flex items-center gap-2 text-sm font-medium">
                 <DotsSixVertical className="size-5 text-muted-foreground" weight="bold" />
                 {activeTitle}
@@ -313,8 +364,9 @@ export function PageGrid({ page, editing = false }: { page: string; editing?: bo
   const layout = useLayout();
   const slots = useSlots(page);
   if (!layout) return <Skeleton className="h-40" />;
-  const cls = "grid grid-flow-row-dense grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:1rem] @2xl:[--cols:2] @5xl:[--cols:3] @5xl:[--gap:1.5rem]";
-  const style = { gridAutoRows: "calc((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols))" };
+  const cls = "grid grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:1rem] @2xl:[--cols:2] @5xl:[--cols:3] @5xl:[--gap:1.5rem]";
+  // row = (column width − gap) / 2, so two rows plus the gap between them are exactly one column wide
+  const style = { gridAutoRows: "calc(((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols) - var(--gap)) / 2)" };
   return (
     <div className="@container">
       {!editing && slots.length === 0 && (

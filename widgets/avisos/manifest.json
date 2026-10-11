@@ -3,7 +3,7 @@
   "title": "Avisos abertos",
   "description": "Alertas e sinais que pedem sua atenção.",
   "source": "versioned",
-  "size": { "w": 3, "h": 2 },
+  "size": { "w": 3, "h": 4 },
   "createdBy": "system",
   "createdAt": "2026-10-10T00:00:00.000Z"
 }

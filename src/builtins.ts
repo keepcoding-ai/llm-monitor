@@ -5,7 +5,7 @@ import { CabeBlock } from "./cabe";
 import { go } from "./router";
 import { VerdictBlock } from "./verdict";
 
-const Veredito = () => createElement(VerdictBlock, { onSettings: () => go("ajustes"), layout: "stack" });
+const Veredito = () => createElement(VerdictBlock, { onSettings: () => go("ajustes") });
 
 export const BUILTINS: Record<string, ComponentType> = {
   veredito: Veredito,

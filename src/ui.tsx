@@ -1,7 +1,33 @@
 // Peças de visualização reusadas pelos widgets (uma vez, aqui — nunca copiadas
 // dentro de cada versão de widget).
 import { motion } from "framer-motion";
-import type { ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
+
+/**
+ * Tamanho real (px) de um elemento, vivo. Para o widget que precisa de conta — quantas linhas
+ * de uma lista cabem na altura que a célula deu. Para só mostrar/esconder por faixa, prefira as
+ * variantes de CSS (`@sm:` de largura, `tall-md:` de altura): elas não esperam a primeira medida.
+ * Uso: `const [ref, box] = useBox<HTMLDivElement>();` e `<div ref={ref} className="h-full">`.
+ */
+export function useBox<T extends HTMLElement>() {
+  // callback ref: the element may mount later than the hook (a widget that first renders an empty state)
+  const [el, ref] = useState<T | null>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    if (!el) return;
+    const measure = () => {
+      const r = { w: Math.round(el.clientWidth), h: Math.round(el.clientHeight) };
+      setBox((cur) => (cur.w === r.w && cur.h === r.h ? cur : r));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+    };
+  }, [el]);
+  return [ref, box] as const;
+}
 
 export function Stat({ label, value, hint, tone }: { label: string; value: ReactNode; hint?: ReactNode; tone?: "alert" | "error" | "success" | "warning" }) {
   const color = tone ? { alert: "text-x-alert", error: "text-x-error", success: "text-x-success", warning: "text-x-warning" }[tone] : "";

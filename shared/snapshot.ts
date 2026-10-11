@@ -109,6 +109,8 @@ export type PageDef = { id: string; title: string; /** nome de ícone Phosphor (
 export type PageId = string;
 export const ICON_NAMES = ["House", "ArrowsClockwise", "Lifebuoy", "GearSix", "Warning", "ChartBar", "Gauge", "Lightning", "Folder", "Star", "Clock", "Coins"] as const;
 
+/** Altura em meias-linhas da grade: 2 = a largura de uma coluna (célula quadrada). */
+export type SlotH = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export type SlotSpec = {
   id: string;
   widget: string;
@@ -116,7 +118,7 @@ export type SlotSpec = {
   page: string;
   order: number;
   w: 1 | 2 | 3;
-  h: 1 | 2 | 3 | 4;
+  h: SlotH;
   title?: string;
 };
 export type WidgetMeta = {
@@ -125,12 +127,12 @@ export type WidgetMeta = {
   description: string;
   /** versioned: widgets/<id>/v<n>.tsx · builtin: componente de código ligado ao shell */
   source: "versioned" | "builtin";
-  size: { w: 1 | 2 | 3; h: 1 | 2 | 3 | 4 };
+  size: { w: 1 | 2 | 3; h: SlotH };
   createdBy: "system" | "owner" | "chat";
   createdAt: string;
 };
 export type Layout = {
-  rev: 5;
+  rev: 6;
   pages: PageDef[];
   slots: SlotSpec[];
   /** derivada de widgets/<id>/manifest.json (scanCollection); não é gravada em disco */

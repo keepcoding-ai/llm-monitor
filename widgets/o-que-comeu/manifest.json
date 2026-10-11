@@ -3,7 +3,7 @@
   "title": "O que comeu",
   "description": "Quem consumiu a semana: modelo, subagentes e projeto.",
   "source": "versioned",
-  "size": { "w": 1, "h": 2 },
+  "size": { "w": 1, "h": 4 },
   "createdBy": "system",
   "createdAt": "2026-10-10T00:00:00.000Z"
 }

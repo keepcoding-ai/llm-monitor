@@ -166,7 +166,7 @@ test("guarda de imutabilidade: versão ativa editada no lugar levanta aviso e n�
   const file = join(r.widgetsDir, "w", "v1.tsx");
   writeFileSync(file, CODE);
   recordFingerprint("w", 1, r.widgetsDir, store);
-  const layout = { rev: 5, pages: [], slots: [], collection: [], versions: { w: [{ v: 1, status: "active", at: "", note: "" }] }, history: {} } as Layout;
+  const layout = { rev: 6, pages: [], slots: [], collection: [], versions: { w: [{ v: 1, status: "active", at: "", note: "" }] }, history: {} } as Layout;
 
   assert.deepEqual(checkImmutability(layout, r.widgetsDir, store), [], "intacta: sem aviso");
 
@@ -188,7 +188,7 @@ test("guarda: versão sem registro vira a referência e versão aposentada não 
   mkdirSync(join(r.widgetsDir, "w"));
   writeFileSync(join(r.widgetsDir, "w", "v1.tsx"), CODE);
   writeFileSync(join(r.widgetsDir, "w", "v2.tsx"), CODE);
-  const layout = { rev: 5, pages: [], slots: [], collection: [], versions: { w: [{ v: 1, status: "retired", at: "", note: "" }, { v: 2, status: "active", at: "", note: "" }] }, history: {} } as Layout;
+  const layout = { rev: 6, pages: [], slots: [], collection: [], versions: { w: [{ v: 1, status: "retired", at: "", note: "" }, { v: 2, status: "active", at: "", note: "" }] }, history: {} } as Layout;
   assert.deepEqual(checkImmutability(layout, r.widgetsDir, store), []);
   assert.deepEqual(Object.keys(JSON.parse(readFileSync(store, "utf8"))), ["w@2"]);
   writeFileSync(join(r.widgetsDir, "w", "v1.tsx"), CODE + "// mexida\n");

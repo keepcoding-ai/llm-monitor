@@ -27,9 +27,18 @@ export function useTick(ms = 5000) {
   }, [ms]);
 }
 
+/** Window names for the narrow one-line form, where the three sit side by side. */
+const SHORT_LABEL: Record<VerdictWindow["id"], string> = { "5h": "5 h", "7d": "Semana", "fable-7d": "Fable" };
+
 const rate = (n: number | null | undefined) => (n == null ? "—" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} %/h`);
 
-function WindowBar({ w, decisive, size }: { w: VerdictWindow; decisive: boolean; size: "md" | "lg" }) {
+/**
+ * One limit window. Two forms, switched by the height of the widget body:
+ * low body = one line (label · bar · %), or label and % over the bar when the card is narrow (the three
+ * sit side by side); from `tall-sm` up = label row, bar and the "renova…" line.
+ * The window that decides the verdict keeps that last line even when space is short.
+ */
+function WindowBar({ w, decisive }: { w: VerdictWindow; decisive: boolean }) {
   const reduce = useReducedMotion();
   const v = w.usedPct == null ? null : Math.max(0, Math.min(100, w.usedPct));
   const color = v == null ? "" : v >= 90 ? "bg-x-error" : v >= 70 ? "bg-x-alert" : "bg-x-success";
@@ -48,24 +57,40 @@ function WindowBar({ w, decisive, size }: { w: VerdictWindow; decisive: boolean;
     else if (w.ratePctPerHour != null) sub.push(rate(w.ratePctPerHour));
     else if (w.note) sub.push(w.note);
   }
+  const value = v == null ? (w.id === "fable-7d" && w.fableCost != null ? usd(w.fableCost, 0) : "—") : `${Math.round(v)} %`;
+  const hasBar = v != null || w.id !== "fable-7d";
+  const fill = v != null && <motion.div className={`h-full rounded-full ${color}`} initial={reduce ? false : { width: 0 }} animate={{ width: `${v}%` }} transition={{ duration: 0.4, ease: "easeOut" }} />;
   return (
     <div className="min-w-0" data-window={w.id}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className={`flex items-center gap-1 ${size === "lg" ? "text-base tv:text-xl" : "text-sm"}`}>
-          {w.label}
-          {decisive && (
-            <span className="inline-flex items-center text-xs font-medium text-x-highlight" title="Esta é a janela que decide o veredito">
-              <CaretLeft weight="bold" aria-hidden />
-              <span>decide</span>
-            </span>
-          )}
+      {/* low body: one line */}
+      <div className="flex flex-wrap items-center gap-x-1 gap-y-0.5 text-xs tall-sm:hidden @lg:flex-nowrap @lg:gap-2 @lg:text-sm">
+        <span className={`min-w-0 flex-1 truncate @lg:w-32 @lg:flex-none ${decisive ? "font-semibold" : ""}`}>
+          <span className="@lg:hidden">{SHORT_LABEL[w.id]}</span>
+          <span className="hidden @lg:inline">{w.label}</span>
         </span>
-        <span className="tabular text-sm font-medium tv:text-lg">{v == null ? (w.id === "fable-7d" && w.fableCost != null ? usd(w.fableCost, 0) : "—") : `${Math.round(v)} % usado`}</span>
+        <span className="order-3 h-1.5 min-w-0 basis-full overflow-hidden rounded-full bg-muted @lg:order-none @lg:h-2 @lg:flex-1 @lg:basis-auto">{fill}</span>
+        <span className="tabular shrink-0 text-right font-medium @lg:w-12">{value}</span>
       </div>
-      {(v != null || w.id !== "fable-7d") && <div className={`mt-1 overflow-hidden rounded-full bg-muted ${size === "lg" ? "h-2.5 tv:h-3" : "h-2"}`} role="meter" aria-valuenow={v ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={w.label}>
-        {v != null && <motion.div className={`h-full rounded-full ${color}`} initial={reduce ? false : { width: 0 }} animate={{ width: `${v}%` }} transition={{ duration: 0.4, ease: "easeOut" }} />}
-      </div>}
-      <div className="mt-1 text-xs text-muted-foreground tv:text-sm">{sub.join(" · ")}</div>
+      <div className="hidden tall-sm:block">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="flex items-center gap-1 text-sm tall-md:@lg:text-base tv:text-xl">
+            {w.label}
+            {decisive && (
+              <span className="inline-flex items-center text-xs font-medium text-x-highlight" title="Esta é a janela que decide o veredito">
+                <CaretLeft weight="bold" aria-hidden />
+                <span>decide</span>
+              </span>
+            )}
+          </span>
+          <span className="tabular text-sm font-medium tv:text-lg">{v == null ? value : `${value} usado`}</span>
+        </div>
+        {hasBar && (
+          <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted tall-md:@lg:h-2.5 tv:h-3" role="meter" aria-valuenow={v ?? undefined} aria-valuemin={0} aria-valuemax={100} aria-label={w.label}>
+            {fill}
+          </div>
+        )}
+        <div className={`mt-1 text-xs text-muted-foreground tv:text-sm ${decisive ? "" : "hidden tall-lg:block tall-md:@lg:block"}`}>{sub.join(" · ")}</div>
+      </div>
     </div>
   );
 }
@@ -82,33 +107,44 @@ function Provenance({ v }: { v: Verdict }) {
   );
 }
 
-export function VerdictBlock({ onSettings, layout = "stack" }: { onSettings: () => void; layout?: "stack" | "wide" }) {
+/**
+ * Fills the grid cell and adapts to it (width: `@lg:` · height: `tall-*:`).
+ * Low body: the sentence (two lines) and one-line bars. Taller: full bars, provenance and the
+ * auto-analysis switch. Wide: sentence on the left, bars on the right.
+ */
+export function VerdictBlock({ onSettings }: { onSettings: () => void }) {
   const s = useSnapshot();
   if (!s?.verdict)
     return (
       <div className="flex flex-col gap-3" aria-busy>
         <Skeleton className="h-7 w-3/4" />
         <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
+        <Skeleton className="hidden h-10 w-full tall-sm:block" />
+        <Skeleton className="hidden h-10 w-full tall-md:block" />
       </div>
     );
   const v = s.verdict;
   const view = STATE_VIEW[v.state === "stale" ? v.underlying ?? "stale" : v.state];
-  const size = layout === "wide" ? "lg" : "md";
+  const prefix = /^(Tranquilo|Atenção|Crítico)\. /.exec(v.headline)?.[0] ?? "";
+  // cota apertada (ou análises já desligadas): o toggle fica onde a decisão nasce
+  const showToggle = ["attention", "critical", "exhausted"].includes(v.underlying ?? v.state) || !s.pulse.enabled;
   return (
-    <section aria-label="Veredito" className="flex flex-col gap-4">
-      <div className="flex gap-3">
+    <section aria-label="Veredito" className="grid h-full min-h-0 content-start gap-x-8 gap-y-1.5 tall-sm:gap-y-3 @lg:grid-cols-2 @lg:grid-rows-[auto_minmax(0,1fr)] @lg:content-stretch">
+      <div className="flex min-w-0 gap-3 @lg:row-span-2 @lg:self-center tall-md:@lg:row-span-1 tall-md:@lg:self-start">
         <motion.span layout className={`w-1 shrink-0 rounded-full ${view.bar}`} aria-hidden />
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-col gap-1 tall-sm:gap-1.5">
+          <div className="hidden flex-wrap items-center gap-2 tall-sm:flex">
             <span className={`text-xs font-semibold uppercase tracking-wide tv:text-sm ${view.text}`}>{view.label}</span>
             {v.state === "stale" && <Badge tone="muted">leitura antiga</Badge>}
           </div>
-          <p className={`text-pretty font-semibold leading-snug tracking-tight ${layout === "wide" ? "text-xl xl:text-2xl tv:text-[1.875rem]" : "text-lg md:text-xl"}`} data-testid="verdict-headline">
-            {v.headline.replace(/^(Tranquilo|Atenção|Crítico)\. /, "")}
+          <p className="line-clamp-3 text-pretty text-base font-semibold leading-snug tracking-tight @3xl:text-lg tall-sm:line-clamp-none tall-sm:text-lg tall-md:@lg:text-xl tall-lg:@lg:text-2xl tv:text-[1.875rem]" data-testid="verdict-headline">
+            {/* low body has no state label: the sentence keeps its opening word */}
+            {prefix && <span className={`tall-sm:hidden ${view.text}`}>{prefix}</span>}
+            {v.headline.slice(prefix.length)}
           </p>
-          <Provenance v={v} />
+          <div className="hidden tall-sm:block">
+            <Provenance v={v} />
+          </div>
           {v.state === "missing" && (
             <Button variant="outline" size="sm" className="mt-1 self-start" onClick={onSettings}>
               <GearSix /> Como ativar
@@ -117,15 +153,18 @@ export function VerdictBlock({ onSettings, layout = "stack" }: { onSettings: () 
         </div>
       </div>
       {v.windows.length > 0 && (
-        <div className="flex flex-col gap-3 tv:gap-4">
+        <div className="grid min-w-0 grid-cols-3 gap-2 @lg:flex @lg:flex-col @lg:justify-center @lg:gap-1.5 tall-sm:flex tall-sm:flex-col tall-sm:justify-center tall-sm:gap-3 tall-lg:@lg:gap-5 @lg:col-start-2 @lg:row-span-2 @lg:row-start-1 tv:gap-4">
           {v.windows.map((w) => (
-            <WindowBar key={w.id} w={w} decisive={v.decisive === w.id && v.state !== "missing"} size={size} />
+            <WindowBar key={w.id} w={w} decisive={v.decisive === w.id && v.state !== "missing"} />
           ))}
         </div>
       )}
-      {/* cota apertada (ou análises já desligadas): o toggle fica onde a decisão nasce */}
-      {(["attention", "critical", "exhausted"].includes(v.underlying ?? v.state) || !s.pulse.enabled) && <AutoAnalysisToggle compact model={s.pulse.model} />}
-      {v.state === "missing" && s.autonomy.basis === "trend" && <p className="text-sm text-muted-foreground">{s.autonomy.verdict}</p>}
+      {showToggle && (
+        <div className="hidden self-end tall-xl:block tall-md:@lg:block @lg:col-start-1 @lg:row-start-2">
+          <AutoAnalysisToggle compact model={s.pulse.model} />
+        </div>
+      )}
+      {v.state === "missing" && s.autonomy.basis === "trend" && <p className="hidden text-sm text-muted-foreground tall-sm:block">{s.autonomy.verdict}</p>}
     </section>
   );
 }

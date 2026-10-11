@@ -95,14 +95,17 @@ Troca: a versão nova grava `v<n+1>` → typecheck (tsc) → render de teste num
 navegador (ErrorBoundary) → só então o slot muda, com entrada animada e selo "versão n". Cada
 slot tem ErrorBoundary próprio. Versões são imutáveis.
 
-A montagem é por página. `state/layout.json` está na rev 5: `pages` (id, title, icon, order,
+A montagem é por página. `state/layout.json` está na rev 6: `pages` (id, title, icon, order,
 kind `grid`/`single`/`settings`, menu, fixed) e `slots` (widget, version, page, order, w 1–3,
-h 1–4). A coleção de widgets é derivada de `widgets/<id>/manifest.json` a cada leitura; widget
-sem manifest não aparece. A migração da rev 4 faz backup em
-`state/backups/layout-rev4-<timestamp>.json`.
+h 1–8). A coleção de widgets é derivada de `widgets/<id>/manifest.json` a cada leitura; widget
+sem manifest não aparece. Toda migração faz backup antes em
+`state/backups/layout-rev<n>-<timestamp>.json`. A da rev 5 para a 6 só dobra o `h` de cada slot
+(a linha passou a valer meia altura); páginas, slots e ordem ficam como estão.
 
-Páginas `grid` são grades de células quadradas, em 1, 2 ou 3 colunas conforme a largura do
-container (`src/grid.tsx`). O widget ocupa w colunas × h linhas e rola por dentro. Veredito e
+Páginas `grid` são grades em 1, 2 ou 3 colunas conforme a largura do container (`src/grid.tsx`).
+A linha vale meia coluna: `h: 2` é um quadrado, `h: 1` é uma faixa baixa. O widget ocupa w colunas
+× h linhas, conhece a largura e a altura que recebeu e se adapta a elas (ver `docs/widget-guide.md`);
+só lista longa rola por dentro. Veredito e
 "Cabe?" são peças de código (builtin, `src/builtins.ts`), posicionáveis como qualquer widget.
 
 Montagem na tela: "Editar página" permite arrastar, mudar largura e altura, mover para outra

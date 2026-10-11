@@ -7,6 +7,16 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Altura útil do corpo do widget (o corpo da célula é um container de tamanho, ver SlotCard).
+ * Par das variantes de largura (@sm:, @md:…): `tall-md:flex` liga quando o corpo tem 15rem ou mais.
+ * Corpo por altura do slot: h1 ≈ 6–10rem (até 17 em coluna única larga) · h2 ≈ 16–25rem ·
+ * h3 ≈ 27–40rem · h4 ≈ 42rem+. */
+@custom-variant tall-sm (@container (min-height: 10.5rem));
+@custom-variant tall-md (@container (min-height: 15rem));
+@custom-variant tall-lg (@container (min-height: 20rem));
+@custom-variant tall-xl (@container (min-height: 26rem));
+@custom-variant tall-2xl (@container (min-height: 40rem));
+
 :root {
   color-scheme: light;
   --background: oklch(0.97 0.008 222);

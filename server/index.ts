@@ -325,7 +325,7 @@ api.get("/layout", (c) => c.json(loadLayout()));
 // montagem: coleção, páginas e slots (corpo validado por Zod; erro de regra volta 400 em português)
 const iconSchema = z.enum(ICON_NAMES);
 const wSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
-const hSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+const hSchema = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(6), z.literal(7), z.literal(8)]);
 const idList = z.object({ ids: z.array(z.string().min(1)) });
 const titleSchema = z.string().trim().min(1, "informe um título").max(60);
 

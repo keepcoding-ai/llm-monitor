@@ -19,10 +19,14 @@ import { publish, clientCount } from "./bus.ts";
 import { clearFlag, raiseFlag } from "./flags.ts";
 import { ICON_NAMES, type Layout, type PageDef, type SlotSpec, type WidgetMeta, type WidgetVersion } from "../shared/snapshot.ts";
 
-// Revisão do layout: quando muda, pages e slots são refeitos a partir dos defaults
-// (versions e history preservados; versão ativa de cada widget mantida). A migração é
-// a função pura migrateLayout; loadLayout só faz o I/O (backup antes de gravar).
-export const LAYOUT_REV = 5;
+// Revisão do layout. A migração é a função pura migrateLayout; loadLayout só faz o I/O
+// (backup antes de gravar).
+// - rev 5 → 6: a linha da grade passou a valer meia altura; só o `h` de cada slot dobra.
+//   Páginas, slots, ordem, versões e histórico do dono ficam como estão.
+// - rev ≤ 4 (ou sem layout): pages e slots nascem dos defaults (versions e history
+//   preservados; versão ativa de cada widget mantida).
+export const LAYOUT_REV = 6;
+const MAX_H = 8;
 
 const DEFAULT_PAGES: PageDef[] = [
   { id: "agora", title: "Agora", icon: "House", order: 10, kind: "grid", menu: true, fixed: true },
@@ -36,14 +40,14 @@ type DefaultSlot = { page: string; widget: string; w: SlotSpec["w"]; h: SlotSpec
 const DEFAULT_SLOTS: DefaultSlot[] = [
   { page: "agora", widget: "veredito", w: 2, h: 1 },
   { page: "agora", widget: "cabe", w: 1, h: 1 },
-  { page: "agora", widget: "semana-ritmo", w: 2, h: 1 },
-  { page: "agora", widget: "o-que-comeu", w: 1, h: 2 },
-  { page: "agora", widget: "janelas", w: 1, h: 1 },
-  { page: "ciclo", widget: "semana-ritmo", w: 3, h: 1 },
-  { page: "ciclo", widget: "o-que-comeu", w: 2, h: 2 },
-  { page: "ciclo", widget: "janelas", w: 1, h: 2 },
-  { page: "reserva", widget: "reserva", w: 3, h: 2 },
-  { page: "avisos", widget: "avisos", w: 3, h: 2 },
+  { page: "agora", widget: "semana-ritmo", w: 1, h: 2 },
+  { page: "agora", widget: "o-que-comeu", w: 1, h: 4 },
+  { page: "agora", widget: "janelas", w: 1, h: 4 },
+  { page: "ciclo", widget: "semana-ritmo", w: 3, h: 2 },
+  { page: "ciclo", widget: "o-que-comeu", w: 2, h: 4 },
+  { page: "ciclo", widget: "janelas", w: 1, h: 4 },
+  { page: "reserva", widget: "reserva", w: 3, h: 4 },
+  { page: "avisos", widget: "avisos", w: 3, h: 4 },
 ];
 /** Widgets de código (sem v<n>.tsx): não têm versão; o slot guarda 0. */
 const BUILTIN_WIDGETS = new Set(["veredito", "cabe"]);
@@ -61,8 +65,15 @@ export function versionsOnDisk(id: string): number[] {
 /** Layout de uma revisão anterior (só o que a migração lê). */
 type OldLayout = { rev?: number; slots?: { widget: string; version: number }[]; versions?: Layout["versions"]; history?: Layout["history"] };
 
-/** Pura: rev anterior (ou nada) → rev 5 com pages e slots default. `collection` fica vazia (é derivada à parte). */
+/** Pura: rev 5 → 6 campo a campo. Só o `h` muda (dobra, com teto em 8); todo o resto é do dono e passa intacto. */
+function doubleHeights(rev5: Omit<Layout, "rev" | "collection">): Layout {
+  const next = structuredClone(rev5);
+  return { ...next, rev: LAYOUT_REV, collection: [], slots: next.slots.map((s) => ({ ...s, h: (Number.isFinite(s.h) ? Math.min(MAX_H, Math.max(1, Math.round(s.h)) * 2) : 2) as SlotSpec["h"] })) };
+}
+
+/** Pura: rev anterior (ou nada) → rev atual. `collection` fica vazia (é derivada à parte). */
 export function migrateLayout(old: OldLayout | null, onDisk: (widget: string) => number[], now = new Date().toISOString()): Layout {
+  if (old?.rev === 5) return doubleHeights(old as unknown as Omit<Layout, "rev" | "collection">);
   const prev = old ? structuredClone(old) : null;
   const fresh: Layout = { rev: LAYOUT_REV, pages: structuredClone(DEFAULT_PAGES), slots: [], collection: [], versions: prev?.versions ?? {}, history: prev?.history ?? {} };
   for (const d of DEFAULT_SLOTS) {
@@ -92,7 +103,7 @@ export function scanCollection(dir: string = WIDGETS_DIR): WidgetMeta[] {
     if (!existsSync(file)) continue;
     try {
       const m = JSON.parse(readFileSync(file, "utf8")) as Partial<WidgetMeta>;
-      const okSize = m.size && [1, 2, 3].includes(m.size.w) && [1, 2, 3, 4].includes(m.size.h);
+      const okSize = m.size && [1, 2, 3].includes(m.size.w) && Number.isInteger(m.size.h) && m.size.h >= 1 && m.size.h <= MAX_H;
       if (m.id !== id || !m.title || (m.source !== "versioned" && m.source !== "builtin") || !okSize) continue;
       out.push({
         id,

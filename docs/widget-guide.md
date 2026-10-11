@@ -32,7 +32,7 @@ Guia oficial para escrever um widget do LLM Monitor que passa de primeira. Quem 
 Exemplo de corpo (`state/agent-work/drafts/gasto-hoje.json`):
 
 ```json
-{ "id": "gasto-hoje", "title": "Gasto de hoje", "description": "Custo de hoje e o ritmo da última hora.", "size": { "w": 1, "h": 1 }, "file": "state/agent-work/drafts/gasto-hoje.tsx" }
+{ "id": "gasto-hoje", "title": "Gasto de hoje", "description": "Custo de hoje e o ritmo da última hora.", "size": { "w": 1, "h": 2 }, "file": "state/agent-work/drafts/gasto-hoje.tsx" }
 ```
 
 ```bash
@@ -40,19 +40,33 @@ curl -s -X POST http://127.0.0.1:4780/llm-monitor/api/v1/widgets -H "content-typ
 ```
 
 `id` é kebab-case (letras minúsculas, números e hífens, até 40 caracteres) e ainda não existe.
-`size.w` vai de 1 a 3 e `size.h` de 1 a 4.
+`size.w` vai de 1 a 3 e `size.h` de 1 a 8 (em meias-linhas: 2 é um quadrado).
 
 ## 3. Tamanho: o widget vive numa célula de grade
 
-- A página é uma grade; cada widget ocupa **w colunas × h linhas** (w 1–3, h 1–4). A célula é
-  quadrada, com cerca de 320–400 px de lado; um widget `w:2 h:1` tem cerca de 680 × 340 px.
-- O card do widget é um **container**: adapte o conteúdo por container query do próprio card
-  (`@xs:`, `@sm:`, `@md:`, `@lg:`, `@xl:` do Tailwind) e não pela largura da janela.
-  `@sm:` começa em 384 px, `@md:` em 448 px, `@lg:` em 512 px, `@xl:` em 576 px.
-- O conteúdo **rola por dentro** (`overflow-y-auto`) quando passa da altura da célula; a página nunca ganha rolagem por causa dele.
-- Escolha `size` pelo conteúdo: um número com legenda cabe em `1×1`; uma lista de até 5 linhas pede `1×2`;
-  uma série temporal pede `2×1` ou `3×1`; tabela ou mapa de calor pede `2×2` ou mais.
-  O dono pode mudar o tamanho depois, então o widget funciona bem em qualquer célula perto do `size` escolhido.
+- A página é uma grade; cada widget ocupa **w colunas × h linhas** (w 1–3, h 1–8). A coluna tem cerca de
+  330–500 px e a linha vale **meia coluna**: `h: 2` é um quadrado, `h: 1` é uma faixa baixa.
+  Um widget `w:2 h:2` tem cerca de 680 × 340 px.
+- A altura da linha acompanha a largura da coluna, então a mesma célula muda de tamanho de tela para tela.
+  Altura útil do corpo (já sem o título do card): `h1` ≈ 85–150 px (até 270 em coluna única larga),
+  `h2` ≈ 265–420 px, `h3` ≈ 440–690 px, `h4` ≈ 600–990 px.
+- O corpo do card é um **container de tamanho**: adapte o conteúdo por container query do próprio card,
+  nunca pela janela.
+  - Largura: `@xs:`, `@sm:`, `@md:`, `@lg:`, `@xl:` do Tailwind (`@sm:` 384 px, `@md:` 448 px, `@lg:` 512 px, `@xl:` 576 px).
+  - Altura: `tall-sm:` (168 px), `tall-md:` (240 px), `tall-lg:` (320 px), `tall-xl:` (416 px), `tall-2xl:` (640 px),
+    definidas em `src/styles.css`. As duas combinam: `tall-md:@xl:flex`.
+- **Ocupe a célula e revele por altura.** A raiz do widget é `flex h-full min-h-0 flex-col`. Sem variante (corpo baixo)
+  mostre só a resposta essencial, compacta: o número, a frase, uma barra. Conforme ganha altura, revele o detalhe:
+  gráfico em `tall-sm:`, legenda e linhas em `tall-md:`, números de apoio em `tall-lg:`/`tall-xl:`.
+- **Sem espaço morto.** O bloco principal (gráfico, grade de opções) leva `flex-1 min-h-0` e estica até o fim do card.
+  Gráfico em SVG estica com `viewBox="0 0 100 100"`, `preserveAspectRatio="none"` e `vectorEffect="non-scaling-stroke"`
+  nos traços; rótulos ficam em HTML por cima, para não deformar (veja `widgets/semana-ritmo/v2.tsx`).
+- **Rolagem só para lista longa de verdade.** A lista leva `min-h-0 overflow-y-auto` e rola por dentro, com o resumo
+  fixo em cima (veja `widgets/janelas/v2.tsx`). Quando o número de linhas deve acompanhar a altura, meça com
+  `useBox()` de `src/ui` (veja `widgets/o-que-comeu/v4.tsx`).
+- Escolha `size` pelo conteúdo: um número com legenda ou uma faixa cabe em `1×1`; resposta com gráfico pede `1×2` ou `2×2`;
+  uma lista de 10 linhas pede `1×4`; tabela ou mapa de calor pede `2×4` ou mais.
+  O dono pode mudar o tamanho depois, então o widget funciona bem em qualquer célula, do `h1` em diante.
 
 ## 4. Dados: o que o snapshot oferece
 
@@ -95,6 +109,7 @@ De `src/ui.tsx` (importe `../../src/ui`):
 - `StackedBars({ data, keys, color, label, format, height? })`: barras empilhadas de série temporal.
 - `Legend({ items })`: legenda de cores.
 - `RankList({ rows, color })`: lista com barra proporcional.
+- `useBox<T>()`: devolve `[ref, { w, h }]` com o tamanho real do elemento, vivo; para contas de quantas linhas cabem.
 
 De `@atrium/core-ui`: `Badge` (`tone`: `info`, `success`…), `Button`, `Empty` (+ `EmptyHeader`, `EmptyTitle`,
 `EmptyDescription`), `ToggleGroup`, `Alert`, `Spinner`, `Markdown`, `Field`, `Input`. Ícones: `@phosphor-icons/react`.
@@ -133,10 +148,10 @@ export default function GastoHoje() {
   if (!s) return null;
   const w5 = s.verdict.windows.find((w) => w.id === "5h");
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <Stat label="Hoje" value={usd(s.today.cost)} hint={`${tokens(s.today.total)} tokens em ${s.today.n} respostas`} />
       {w5?.usedPct != null ? (
-        <Meter value={w5.usedPct} label="Janela de 5 h" sub={w5.resetHuman} />
+        <Meter value={w5.usedPct} label="Janela de 5 h" sub={<span className="hidden tall-sm:inline">{w5.resetHuman}</span>} />
       ) : (
         <p className="text-sm text-muted-foreground">Sem leitura da janela de 5 h agora.</p>
       )}
@@ -145,4 +160,4 @@ export default function GastoHoje() {
 }
 ```
 
-Esse widget usa `size: { w: 1, h: 1 }`: um número, um medidor e uma legenda cabem numa célula.
+Esse widget usa `size: { w: 1, h: 2 }`: um número, um medidor e uma legenda cabem num quadrado; num corpo baixo (`h: 1`) a linha de renovação some.
