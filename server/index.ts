@@ -43,7 +43,7 @@ async function cycle() {
   try {
     const a = await collectClaude((n) => publish("progress", { files: n, records: records.length }));
     const b = await collectSoul();
-    await getOfficialUsage(); // cache de 60 s; nunca lança
+    await getOfficialUsage(); // respeita TTL e backoff; nunca lança
     revertTempDefault();
     saveOffsets();
     collectorError = null;

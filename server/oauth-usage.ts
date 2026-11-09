@@ -27,10 +27,30 @@ export type OfficialUsage = {
   fable?: OfficialWindow;
   fableKey?: string;
   debug?: OfficialDebug;
+  /** ISO: o fornecedor respondeu 429; não há nova chamada antes deste instante */
+  backoffUntil?: string;
 };
 
-const TTL = 60_000;
+// O endpoint oficial responde 429 se chamado a menos de ~5 min; outras ferramentas locais dividem o mesmo login.
+const envTtl = Number(process.env.LLM_MONITOR_OFFICIAL_TTL_SEC);
+const TTL = (Number.isFinite(envTtl) && envTtl > 0 ? envTtl : 300) * 1000;
+const DEFAULT_BACKOFF = 600_000;
 let cache: { at: number; value: OfficialUsage } | null = null;
+let lastGood: OfficialUsage | null = null;
+let backoffUntil = 0;
+/** só para testes */
+export function __resetOfficialUsage() { cache = null; lastGood = null; backoffUntil = 0; inflight = null; }
+
+/** Retry-After: segundos ou data HTTP; ausente/inválido -> backoff padrão (ms). */
+export function parseRetryAfter(h: string | null, now = Date.now()): number {
+  if (h) {
+    const n = Number(h);
+    if (Number.isFinite(n) && n >= 0) return n * 1000;
+    const d = Date.parse(h);
+    if (Number.isFinite(d)) return Math.max(0, d - now);
+  }
+  return DEFAULT_BACKOFF;
+}
 let inflight: Promise<OfficialUsage> | null = null;
 
 function token(): { token: string } | { reason: string } {
@@ -77,6 +97,13 @@ async function fetchOnce(): Promise<OfficialUsage> {
       headers: { Authorization: `Bearer ${t.token}`, "anthropic-beta": "oauth-2025-04-20", "Content-Type": "application/json" },
       signal: AbortSignal.timeout(10_000),
     });
+    if (res.status === 429) {
+      backoffUntil = Date.now() + parseRetryAfter(res.headers.get("retry-after"));
+      const until = new Date(backoffUntil).toISOString();
+      return lastGood
+        ? { ...lastGood, backoffUntil: until }
+        : { state: "unavailable", reason: "HTTP 429", at, keys: [], backoffUntil: until };
+    }
     if (!res.ok) return { state: "unavailable", reason: `HTTP ${res.status}`, at, keys: [] };
     const j: any = await res.json();
     const keys = Object.keys(j ?? {});
@@ -90,15 +117,19 @@ async function fetchOnce(): Promise<OfficialUsage> {
         fableKey = "limits[weekly_scoped:Fable]";
       }
     }
-    return { state: "ok", at, keys, five: win(j.five_hour), seven: win(j.seven_day), fable, fableKey, debug: describeShape(j) };
+    const ok: OfficialUsage = { state: "ok", at, keys, five: win(j.five_hour), seven: win(j.seven_day), fable, fableKey, debug: describeShape(j) };
+    lastGood = ok;
+    return ok;
   } catch (e) {
     return { state: "unavailable", reason: e instanceof Error && e.name === "TimeoutError" ? "tempo esgotado" : "falha de rede", at, keys: [] };
   }
 }
 
-/** Busca com cache de ~60 s; nunca lança. */
+/** Busca com cache (TTL 300 s) e respeito ao backoff de 429; nunca lança. */
 export function getOfficialUsage(): Promise<OfficialUsage> {
-  if (cache && Date.now() - cache.at < TTL) return Promise.resolve(cache.value);
+  const now = Date.now();
+  if (cache && now - cache.at < TTL) return Promise.resolve(cache.value);
+  if (now < backoffUntil && cache) return Promise.resolve(cache.value);
   inflight ??= fetchOnce().then((v) => {
     cache = { at: Date.now(), value: v };
     inflight = null;
