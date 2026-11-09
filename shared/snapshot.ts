@@ -6,10 +6,12 @@ export type Bucket = Tokens & { cost: number; n: number };
 export type Named = Bucket & { key: string };
 
 export type LimitWindow = { usedPct: number; resetsAt: string | null };
+/** Origem da leitura dos limites: o /api/oauth/usage ("official", primária) ou a linha de status do Claude Code (reserva). */
+export type LimitsSource = "official" | "statusline";
 export type Limits =
   | { state: "missing"; reason: string }
-  | { state: "stale"; reason: string; at: string; fiveHour?: LimitWindow; sevenDay?: LimitWindow }
-  | { state: "ok"; at: string; fiveHour?: LimitWindow; sevenDay?: LimitWindow; model?: string; version?: string };
+  | { state: "stale"; reason: string; at: string; source?: LimitsSource; fiveHour?: LimitWindow; sevenDay?: LimitWindow }
+  | { state: "ok"; at: string; source?: LimitsSource; fiveHour?: LimitWindow; sevenDay?: LimitWindow; model?: string; version?: string };
 
 export type Autonomy =
   | { basis: "limits"; window: "5h" | "7d"; usedPct: number; ratePctPerHour: number; hitsAt: string | null; resetsAt: string | null; verdict: string }
@@ -20,6 +22,7 @@ export type VerdictWindow = {
   id: "5h" | "7d" | "fable-7d"; label: string; usedPct: number | null; resetsAt: string | null;
   resetHuman: string; ratePctPerHour: number | null; rateAvgPctPerHour?: number | null; rateRecentPctPerHour?: number | null;
   hitsAt: string | null; hitsHuman: string | null; exhausts: boolean; projAtReset: number | null;
+  /** "official" = /api/oauth/usage; "statusline" = linha de status; "manual"/"none" só no Fable */
   source: "statusline" | "manual" | "official" | "none"; note?: string;
   /** Fable: uso real da semana (tokens/US$ equivalente) e quando o % foi informado à mão */
   fableTokens?: number; fableCost?: number; fableSince?: string; fableSinceHuman?: string; manualAt?: string;

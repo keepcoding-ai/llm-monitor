@@ -6,7 +6,9 @@ import type { Verdict, VerdictState, VerdictWindow } from "../shared/snapshot.ts
 const H = 3600_000;
 const D = 24 * H;
 
-export type Reading = { at: string; session?: string | null; five?: { usedPct: number; resetsAt: string | null }; seven?: { usedPct: number; resetsAt: string | null } };
+/** De onde veio a leitura: o /api/oauth/usage ("official") ou a linha de status do Claude Code (ausente = statusline, histórico antigo). */
+export type ReadingSource = "official" | "statusline";
+export type Reading = { at: string; session?: string | null; source?: ReadingSource; five?: { usedPct: number; resetsAt: string | null }; seven?: { usedPct: number; resetsAt: string | null } };
 export type FableManual = { pct: number; at: string; resetsAt: string | null };
 export type FableOfficial = { pct: number; resetsAt: string | null; at: string };
 export type FableUsage = { tokens: number; cost: number; since: string } | null;
@@ -55,6 +57,16 @@ export function humanTime(iso: string | number, now: number, kind: "proj" | "res
   if (dd === 1) return `amanhã às ${hm(d)}`;
   if (dd > 0 && dd < 7) return `${WD_LONG[d.getDay()]}, ${hm(d)}`;
   return `${d.getDate()} de ${MONTH[d.getMonth()]}`;
+}
+
+/** "23/10 às 10:04 (há 17 dias)": a data sempre presente — só a hora fez um dado de 17 dias parecer de hoje. */
+export function whenFull(iso: string | number, now: number): string {
+  const t = typeof iso === "number" ? iso : Date.parse(iso);
+  if (!Number.isFinite(t)) return "data desconhecida";
+  const d = new Date(t);
+  const days = Math.floor((now - t) / D);
+  const year = d.getFullYear() !== new Date(now).getFullYear() ? `/${d.getFullYear()}` : "";
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}${year} às ${hm(d)}${days >= 1 ? ` (há ${days} ${days === 1 ? "dia" : "dias"})` : ""}`;
 }
 
 /** Forma curta para a linha de status (≤ 40 caracteres no total). */
@@ -231,14 +243,19 @@ export function computeVerdict(inp: VerdictInput): Verdict {
   const windows: VerdictWindow[] = [];
 
   // sessão de 5 h
+  const src: ReadingSource = latest.source ?? "statusline";
   if (latest.five && (!latest.five.resetsAt || Date.parse(latest.five.resetsAt) > now)) {
     const w5 = latest.five;
     const series = counterSeries(hist.filter((h) => h.five && (w5.resetsAt ? sameReset(h.five.resetsAt, w5.resetsAt) : !h.five.resetsAt)).map((h) => ({ t: Date.parse(h.at), v: h.five!.usedPct, s: h.session })));
     const used = series.length ? series[series.length - 1].v : w5.usedPct;
     const rate = robustSlope(series.filter((p) => now - p.t <= 90 * 60_000));
-    windows.push(project("5h", used, w5.resetsAt, rate, now, rate == null ? { note: "ritmo ainda sem pontos suficientes" } : {}));
+    windows.push(project("5h", used, w5.resetsAt, rate, now, { source: src, ...(rate == null ? { note: "ritmo ainda sem pontos suficientes" } : {}) }));
   } else {
-    windows.push({ ...project("5h", null, null, null, now), note: "renovada — aguardando a primeira leitura" });
+    // duas circunstâncias diferentes, nenhuma é erro: a janela renovou, ou a fonte não trouxe a janela
+    // (o fornecedor muda regras e promoções; pode não estar computando a de 5 h agora)
+    const renewed = latest.five != null;
+    const note = renewed ? "renovada — aguardando a primeira leitura" : src === "official" ? "o fornecedor não está computando esta janela no momento" : "a leitura da statusline não trouxe esta janela";
+    windows.push({ ...project("5h", null, null, null, now, { source: src }), note });
   }
 
   // semana: max(regressão 24 h, média desde o início da semana) — sempre projeta
@@ -252,7 +269,7 @@ export function computeVerdict(inp: VerdictInput): Verdict {
     const hoursSince = weekStart != null ? (now - weekStart) / H : null;
     const avg = hoursSince && hoursSince > 0 ? used / hoursSince : null;
     const rate = recent == null ? avg : avg == null ? recent : Math.max(recent, avg);
-    windows.push(project("7d", used, w7.resetsAt, rate, now, { rateAvgPctPerHour: avg, rateRecentPctPerHour: recent }));
+    windows.push(project("7d", used, w7.resetsAt, rate, now, { source: src, rateAvgPctPerHour: avg, rateRecentPctPerHour: recent }));
   }
 
   // Fable na semana

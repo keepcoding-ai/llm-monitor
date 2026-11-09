@@ -10,6 +10,7 @@ import { collectClaude, meta } from "./collector/claude.ts";
 import { collectSoul, activateSoulAccount } from "./collector/soul.ts";
 import { saveOffsets } from "./collector/incremental.ts";
 import { getOfficialUsage } from "./oauth-usage.ts";
+import { officialReading, officialSig, shouldRecordOfficial } from "./official-reading.ts";
 import { buildSnapshot, setPulseState, statuslineMtime } from "./derive.ts";
 import { ackFlag, flushFlags } from "./flags.ts";
 import { publish, subscribe } from "./bus.ts";
@@ -69,8 +70,19 @@ function scheduleCycle() {
 
 // uso oficial do plano: atualiza a cada ~60 s e republica só se mudou
 let lastOfficial = "";
+let lastRecorded: { sig: string; t: number } | null = null;
 setInterval(async () => {
   const u = await getOfficialUsage();
+  // a leitura oficial também alimenta o histórico (ritmo, pontos da semana): quando muda e, parada, a cada 15 min
+  const rd = officialReading(u);
+  if (rd && shouldRecordOfficial(lastRecorded, rd, Date.now())) {
+    lastRecorded = { sig: officialSig(rd), t: Date.now() };
+    try {
+      appendJsonl(P.statuslineHistory, [rd]);
+    } catch (e) {
+      console.error("[oficial] não gravou no histórico:", (e as Error).message);
+    }
+  }
   const sig = JSON.stringify([u.state, u.five, u.seven, u.fable]);
   if (sig === lastOfficial) return;
   lastOfficial = sig;
@@ -107,6 +119,9 @@ const schedulePulse = pulseScheduler.schedule;
 // ------------------------------------------------------------ API
 
 const api: Hono = new Hono();
+
+// o que a leitura oficial trouxe: estado, janelas e a forma da resposta (só nomes e tipos; nunca o token)
+api.get("/official", async (c) => c.json(await getOfficialUsage()));
 
 api.get("/snapshot", (c) => (snapshot ? c.json(snapshot) : c.json({ error: collectorError ?? "primeira coleta em andamento" }, 503)));
 

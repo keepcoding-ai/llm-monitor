@@ -5,6 +5,16 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 export type OfficialWindow = { usedPct: number; resetsAt: string | null };
+/**
+ * Forma da resposta, só NOMES e tipos (nunca valores): serve para ver a olho se o fornecedor trouxe
+ * ou não uma janela. Ausência de janela é circunstância observada (promoções e regras mudam), não erro.
+ */
+export type OfficialDebug = {
+  /** chave de topo -> tipo ("null", "number", "array(n)", "object{a,b}", ...) */
+  shape: Record<string, string>;
+  /** limits[]: kind (e escopo, se houver) de cada item */
+  limitKinds: string[];
+};
 export type OfficialUsage = {
   state: "ok" | "unavailable";
   reason?: string;
@@ -16,6 +26,7 @@ export type OfficialUsage = {
   /** chave seven_day_* do Fable/Mythos, se existir */
   fable?: OfficialWindow;
   fableKey?: string;
+  debug?: OfficialDebug;
 };
 
 const TTL = 60_000;
@@ -35,6 +46,23 @@ function token(): { token: string } | { reason: string } {
   } catch {
     return { reason: "credenciais ilegíveis" };
   }
+}
+
+/** Nome vindo de fora: só caracteres de identificador, curto. Nunca um valor da resposta. */
+const name = (x: unknown) => String(x ?? "").replace(/[^\w.\-: ]/g, "?").slice(0, 40);
+function tag(v: unknown): string {
+  if (v === null) return "null";
+  if (Array.isArray(v)) return `array(${v.length})`;
+  if (typeof v === "object") return `object{${Object.keys(v as object).slice(0, 12).map(name).join(",")}}`;
+  return typeof v;
+}
+export function describeShape(j: any): OfficialDebug {
+  const shape: Record<string, string> = {};
+  for (const k of Object.keys(j ?? {}).slice(0, 40)) shape[name(k)] = tag(j[k]);
+  const limitKinds = Array.isArray(j?.limits)
+    ? j.limits.slice(0, 20).map((l: any) => `${name(l?.kind)}${l?.scope?.model?.display_name ? `:${name(l.scope.model.display_name)}` : ""}`)
+    : [];
+  return { shape, limitKinds };
 }
 
 const win = (x: any): OfficialWindow | undefined =>
@@ -62,7 +90,7 @@ async function fetchOnce(): Promise<OfficialUsage> {
         fableKey = "limits[weekly_scoped:Fable]";
       }
     }
-    return { state: "ok", at, keys, five: win(j.five_hour), seven: win(j.seven_day), fable, fableKey };
+    return { state: "ok", at, keys, five: win(j.five_hour), seven: win(j.seven_day), fable, fableKey, debug: describeShape(j) };
   } catch (e) {
     return { state: "unavailable", reason: e instanceof Error && e.name === "TimeoutError" ? "tempo esgotado" : "falha de rede", at, keys: [] };
   }

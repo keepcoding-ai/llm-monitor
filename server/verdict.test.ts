@@ -2,8 +2,10 @@
 // Rodar: npm test  (node --import tsx --test)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeVerdict, counterSeries, humanTime, otherAccounts, robustSlope, type Reading } from "./verdict.ts";
+import { computeVerdict, counterSeries, humanTime, otherAccounts, robustSlope, whenFull, type Reading } from "./verdict.ts";
 import { band, shouldNotify } from "../shared/notify.ts";
+import { describeShape } from "./oauth-usage.ts";
+import { officialReading, officialSig, pickLatest, shouldRecordOfficial } from "./official-reading.ts";
 
 const L = (y: number, mo: number, d: number, h: number, mi = 0) => new Date(y, mo - 1, d, h, mi).getTime();
 const iso = (t: number) => new Date(t).toISOString();
@@ -193,4 +195,107 @@ test("Fable manual: entra com % e expira na renovação semanal", () => {
   assert.equal(f.source, "manual");
   const after = computeVerdict({ now: Date.parse(WEEK_RESET) + MIN, latest: r, history: [r], fableManual: { pct: 20, at: iso(NOW), resetsAt: WEEK_RESET } });
   assert.equal(after.windows.find((w) => w.id === "fable-7d"), undefined);
+});
+
+// ---------------------------------------------------------------- fonte oficial primária (F2/F3)
+
+const official = (at: number, over: Partial<Reading> = {}): Reading => ({
+  at: iso(at),
+  session: null,
+  source: "official",
+  seven: { usedPct: 20, resetsAt: WEEK_RESET },
+  five: { usedPct: 10, resetsAt: FIVE_RESET },
+  ...over,
+});
+const OLD_STATUSLINE: Reading = { at: iso(L(2026, 9, 14, 10, 4)), session: "s-old", seven: { usedPct: 30, resetsAt: iso(L(2026, 9, 16, 12)) }, five: { usedPct: 40, resetsAt: iso(L(2026, 9, 14, 15)) } };
+
+test("oficial primária: as janelas 5 h e semana saem rotuladas como oficial, não statusline", () => {
+  const o = official(NOW - MIN);
+  const v = computeVerdict({ now: NOW, latest: o, history: [o] });
+  assert.equal(v.windows.find((w) => w.id === "5h")!.source, "official");
+  assert.equal(v.windows.find((w) => w.id === "7d")!.source, "official");
+  // leitura sem origem (histórico antigo, statusline) continua rotulada statusline
+  const sl: Reading = { at: iso(NOW - MIN), session: "s-1", seven: { usedPct: 10, resetsAt: WEEK_RESET }, five: { usedPct: 20, resetsAt: FIVE_RESET } };
+  const v2 = computeVerdict({ now: NOW, latest: sl, history: [sl] });
+  assert.equal(v2.windows.find((w) => w.id === "7d")!.source, "statusline");
+});
+
+test("statusline velha + oficial fresca: a oficial é a leitura e o veredito não fica stale", () => {
+  const o = official(NOW - 2 * MIN);
+  const picked = pickLatest(OLD_STATUSLINE, o, NOW);
+  assert.equal(picked, o);
+  const v = computeVerdict({ now: NOW, latest: picked, history: [OLD_STATUSLINE, o] });
+  assert.notEqual(v.state, "stale");
+  assert.equal(v.readAt, o.at);
+  // sem oficial utilizável, a statusline de 17 dias segue valendo — e aí o veredito é stale
+  const alone = pickLatest(OLD_STATUSLINE, null, NOW);
+  assert.equal(alone, OLD_STATUSLINE);
+  assert.equal(computeVerdict({ now: NOW, latest: alone, history: [OLD_STATUSLINE] }).state, "stale");
+  // oficial velha (> 15 min) mas mais nova que a statusline: ainda é a melhor leitura
+  const oldOff = official(NOW - 40 * MIN);
+  assert.equal(pickLatest(OLD_STATUSLINE, oldOff, NOW), oldOff);
+  // statusline fresca vence oficial velha
+  const freshSl: Reading = { ...OLD_STATUSLINE, at: iso(NOW - MIN) };
+  assert.equal(pickLatest(freshSl, oldOff, NOW), freshSl);
+});
+
+test("5 h ausente da leitura oficial: nota neutra, sem 'aguardando' nem erro", () => {
+  const o = official(NOW - MIN, { five: undefined });
+  const v = computeVerdict({ now: NOW, latest: o, history: [o] });
+  const w5 = v.windows.find((w) => w.id === "5h")!;
+  assert.equal(w5.usedPct, null);
+  assert.equal(w5.source, "official");
+  assert.equal(w5.note, "o fornecedor não está computando esta janela no momento");
+  assert.doesNotMatch(w5.note!, /aguardando|erro|falh/i);
+  assert.notEqual(v.state, "missing"); // a semana segue valendo
+});
+
+test("5 h com reset no passado: renovada (outra circunstância)", () => {
+  const o = official(NOW - MIN, { five: { usedPct: 60, resetsAt: iso(NOW - 30 * MIN) } });
+  const w5 = computeVerdict({ now: NOW, latest: o, history: [o] }).windows.find((w) => w.id === "5h")!;
+  assert.equal(w5.note, "renovada — aguardando a primeira leitura");
+});
+
+test("leitura oficial vira Reading só com janela; ausência não é erro", () => {
+  const ok = { state: "ok" as const, at: iso(NOW), keys: [], seven: { usedPct: 5, resetsAt: WEEK_RESET } };
+  assert.deepEqual(officialReading(ok), { at: iso(NOW), session: null, source: "official", five: undefined, seven: ok.seven });
+  assert.equal(officialReading({ state: "unavailable", at: iso(NOW), keys: [], reason: "HTTP 401" }), null);
+  assert.equal(officialReading({ state: "ok", at: iso(NOW), keys: [] }), null);
+  assert.equal(officialReading(null), null);
+});
+
+test("histórico oficial: grava na primeira, quando muda e a cada 15 min; não a cada poll", () => {
+  const a = official(NOW);
+  const sig = officialSig(a);
+  assert.equal(shouldRecordOfficial(null, a, NOW), true);
+  assert.equal(shouldRecordOfficial({ sig, t: NOW }, official(NOW + MIN), NOW + MIN), false);
+  assert.equal(shouldRecordOfficial({ sig, t: NOW }, official(NOW + 14 * MIN), NOW + 14 * MIN), false);
+  assert.equal(shouldRecordOfficial({ sig, t: NOW }, official(NOW + 15 * MIN), NOW + 15 * MIN), true);
+  const moved = official(NOW + MIN, { seven: { usedPct: 21, resetsAt: WEEK_RESET } });
+  assert.equal(shouldRecordOfficial({ sig, t: NOW }, moved, NOW + MIN), true);
+});
+
+test("leituras oficiais no histórico alimentam o ritmo da semana e não quebram a série", () => {
+  // 2 h de leituras oficiais (sem sessão), semana subindo 1 pt/h: o ritmo recente é medido, não só a média
+  const hist: Reading[] = [];
+  for (let i = 0; i <= 8; i++) hist.push(official(NOW - (8 - i) * 15 * MIN, { seven: { usedPct: 20 + i * 0.25, resetsAt: WEEK_RESET }, five: undefined }));
+  const v = computeVerdict({ now: NOW, latest: hist.at(-1)!, history: hist });
+  const w7 = v.windows.find((w) => w.id === "7d")!;
+  assert.ok(w7.rateRecentPctPerHour != null && Math.abs(w7.rateRecentPctPerHour - 1) < 0.1, `recente ${w7.rateRecentPctPerHour}`);
+  assert.equal(w7.source, "official");
+});
+
+test("dado velho nomeia a data, não só a hora", () => {
+  assert.match(whenFull(OLD_STATUSLINE.at, NOW), /^14\/09 às \d{2}:\d{2} \(há 17 dias\)$/);
+  assert.match(whenFull(iso(NOW - 2 * 3600_000), NOW), /^01\/10 às \d{2}:\d{2}$/);
+});
+
+test("F1: forma da resposta oficial só tem nomes e tipos, nunca valores", () => {
+  const j = { five_hour: null, seven_day: { utilization: 42.5, resets_at: "2026-11-12T15:00:00Z" }, limits: [{ kind: "weekly_scoped", percent: 77, scope: { model: { display_name: "Fable" } } }, { kind: "weekly" }], extra_usage: 12345 };
+  const d = describeShape(j);
+  assert.equal(d.shape.five_hour, "null");
+  assert.equal(d.shape.seven_day, "object{utilization,resets_at}");
+  assert.equal(d.shape.limits, "array(2)");
+  assert.deepEqual(d.limitKinds, ["weekly_scoped:Fable", "weekly"]);
+  assert.doesNotMatch(JSON.stringify(d), /42\.5|77|12345|2026-11-12/);
 });

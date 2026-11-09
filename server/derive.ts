@@ -9,7 +9,8 @@ import { readClaudeSettings } from "./control.ts";
 import { buildCabe, checkEstimates, fiveHourWindows } from "./cabe.ts";
 import type { Cabe } from "../shared/cabe.ts";
 import { peekOfficialUsage } from "./oauth-usage.ts";
-import { computeVerdict, humanTime, otherAccounts, sameReset, type FableManual, type Reading } from "./verdict.ts";
+import { FRESH_MS, officialReading, pickLatest } from "./official-reading.ts";
+import { computeVerdict, humanTime, otherAccounts, sameReset, whenFull, type FableManual, type Reading } from "./verdict.ts";
 import type { Verdict, Autonomy, Bucket, Limits, LimitWindow, Named, PulseRecord, Snapshot, Suggestion } from "../shared/snapshot.ts";
 
 const H = 3600_000;
@@ -70,19 +71,31 @@ function windowOf(x: any): LimitWindow | undefined {
   return { usedPct: pct, resetsAt };
 }
 
-function readLimits(): Limits {
-  if (!existsSync(P.statusline)) return { state: "missing", reason: "Limites indisponíveis — ative a statusline do monitor no Claude Code (veja o README)." };
+/**
+ * Limites do plano. Fonte primária: leitura oficial (/api/oauth/usage) fresca (< 15 min);
+ * reserva: a statusline do Claude Code. `source` diz de qual dos dois veio o que está na tela.
+ */
+export function readLimits(now = Date.now()): Limits {
+  const peek = peekOfficialUsage();
+  const off = officialReading(peek);
+  if (off && now - Date.parse(off.at) < FRESH_MS) return { state: "ok", source: "official", at: off.at, fiveHour: off.five, sevenDay: off.seven };
+  // sem oficial fresca: a razão entra nas mensagens da reserva, para não parecer que só a statusline falhou
+  const offWhy = peek?.state === "unavailable" ? ` Leitura oficial indisponível agora (${peek.reason ?? "sem motivo informado"}).` : "";
+  if (!existsSync(P.statusline)) return { state: "missing", reason: `Limites indisponíveis — ative a statusline do monitor no Claude Code (veja o README).${offWhy}` };
   const s = readJson<StatuslineSnap>(P.statusline, { at: "", keys: [], rateLimits: null });
   const fiveHour = windowOf(s.rateLimits?.five_hour);
   const sevenDay = windowOf(s.rateLimits?.seven_day);
   if (!fiveHour && !sevenDay) {
     raiseFlag({ key: "statusline-no-limits", kind: "fonte-incompleta", level: "warning", title: "A linha de status chega, mas sem os limites do plano", detail: `O Claude Code não enviou o % da sessão de 5 h nem da semana nesta versão ou conta (${s.keys.length} campos recebidos). Sem eles, o veredito fica só na tendência.` });
-    return { state: "missing", reason: "A statusline está ativa, mas o Claude Code não enviou os limites de 5 h/semana nesta versão ou conta." };
+    return { state: "missing", reason: `A statusline está ativa, mas o Claude Code não enviou os limites de 5 h/semana nesta versão ou conta.${offWhy}` };
   }
   clearFlag("statusline-no-limits");
-  const age = Date.now() - Date.parse(s.at);
-  if (age > 15 * 60_000) return { state: "stale", reason: `Último dado de limite às ${hhmm(s.at)} — a statusline só atualiza enquanto o Claude Code está aberto.`, at: s.at, fiveHour, sevenDay };
-  return { state: "ok", at: s.at, fiveHour, sevenDay, model: s.model, version: s.version };
+  if (!(now - Date.parse(s.at) <= FRESH_MS)) {
+    // reserva velha: se houver leitura oficial mais nova que ela (mesmo fora da janela de frescor), é essa que se mostra
+    if (off && Date.parse(off.at) > (Date.parse(s.at) || 0)) return { state: "stale", source: "official", reason: `Última leitura oficial dos limites em ${whenFull(off.at, now)}.`, at: off.at, fiveHour: off.five, sevenDay: off.seven };
+    return { state: "stale", source: "statusline", reason: `Último dado de limite em ${whenFull(s.at, now)} — a statusline só atualiza enquanto o Claude Code está aberto.${offWhy}`, at: s.at, fiveHour, sevenDay };
+  }
+  return { state: "ok", source: "statusline", at: s.at, fiveHour, sevenDay, model: s.model, version: s.version };
 }
 
 function autonomy(limits: Limits, recent: UsageRecord[], now: number): Autonomy {
@@ -121,7 +134,7 @@ function autonomy(limits: Limits, recent: UsageRecord[], now: number): Autonomy 
     tokensPerHourNow: lastHour,
     tokensPerHourAvg: avg,
     verdict: avg === 0 ? "Sem consumo na última semana." : ratio > 1.5 ? `Ritmo da última hora ${ratio.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}× acima da sua média por hora ativa.` : ratio < 0.5 ? "Ritmo da última hora abaixo da sua média." : "Ritmo da última hora dentro da sua média.",
-    reason: "Sem os limites da statusline não há como dizer quando o plano bate o teto — só a tendência de tokens (sem cache lido).",
+    reason: "Sem a janela de 5 h entre os limites lidos não há como dizer quando ela bate o teto — só a tendência de tokens (sem cache lido).",
   };
 }
 
@@ -137,15 +150,14 @@ export function readHistory(now: number): Reading[] {
   return readJsonl<Reading>(P.statuslineHistory).filter((h) => now - Date.parse(h.at) <= 8 * D);
 }
 export function buildVerdict(now: number, lastUsageAt: number | null, history: Reading[] = readHistory(now)): Verdict {
-  let latest: Reading | null = null;
+  let statusline: Reading | null = null;
   if (existsSync(P.statusline)) {
     const s = readJson<StatuslineSnap & { session?: string }>(P.statusline, { at: "", keys: [], rateLimits: null });
-    if (s.at) latest = { at: s.at, session: s.session ?? null, five: toWin(s.rateLimits?.five_hour), seven: toWin(s.rateLimits?.seven_day) };
+    if (s.at) statusline = { at: s.at, session: s.session ?? null, source: "statusline", five: toWin(s.rateLimits?.five_hour), seven: toWin(s.rateLimits?.seven_day) };
   }
-  // uso oficial (/api/oauth/usage): cobre a leitura quando a linha de status faltou ou está velha
+  // uso oficial (/api/oauth/usage): fonte primária quando fresco; a statusline é a reserva
   const off = peekOfficialUsage();
-  if (off?.state === "ok" && (off.five || off.seven) && (!latest || now - Date.parse(latest.at) > 15 * 60_000) && Date.parse(off.at) > (latest ? Date.parse(latest.at) : 0))
-    latest = { at: off.at, session: null, five: off.five, seven: off.seven };
+  const latest = pickLatest(statusline, officialReading(off), now);
   const weekStart = latest?.seven?.resetsAt ? Date.parse(latest.seven.resetsAt) - 7 * D : now - 7 * D;
   const fable = since(weekStart).filter((r) => r.source === "claude-code" && family(r.model) === "fable");
   const fableUsage = fable.length ? { tokens: fable.reduce((x, r) => x + r.input + r.output + r.cacheWrite + r.cacheRead, 0), cost: fable.reduce((x, r) => x + (r.cost ?? 0), 0), since: new Date(weekStart).toISOString() } : null;
@@ -384,7 +396,7 @@ function suggestions(s: Snapshot, rToday: UsageRecord[], wins: Snapshot["windows
   const act = wins.find((w) => w.active);
   const resets = s.limits.state !== "missing" ? s.limits.fiveHour?.resetsAt : null;
   if (resets) out.push({ id: "window-reset", origin: "regra", level: "info", title: `A janela de 5 h reseta às ${hhmm(resets)}`, detail: `Uso atual: ${s.limits.state !== "missing" ? s.limits.fiveHour?.usedPct.toFixed(0) : "?"}%.`, at });
-  else if (act) out.push({ id: "window-reset-est", origin: "regra", level: "info", title: `Janela estimada termina às ${hhmm(act.end)}`, detail: "Estimativa pelo horário da primeira mensagem (sem statusline não há o horário oficial).", at });
+  else if (act) out.push({ id: "window-reset-est", origin: "regra", level: "info", title: `Janela estimada termina às ${hhmm(act.end)}`, detail: "Estimativa pelo horário da primeira mensagem (a leitura dos limites não trouxe o horário oficial desta janela).", at });
   if (s.limits.state !== "missing" && s.limits.sevenDay && s.limits.sevenDay.usedPct >= 70) {
     out.push({ id: "week-high", origin: "regra", level: "alert", title: `Semana em ${s.limits.sevenDay.usedPct.toFixed(0)}%`, detail: `Reseta ${s.limits.sevenDay.resetsAt ? new Date(s.limits.sevenDay.resetsAt).toLocaleString("pt-BR", { weekday: "long", hour: "2-digit", minute: "2-digit" }) : "em data não informada"}. Priorize sonnet/haiku até lá.`, at });
   }
