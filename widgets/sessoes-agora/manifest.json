@@ -1,0 +1,12 @@
+{
+  "id": "sessoes-agora",
+  "title": "Sessões agora",
+  "description": "Custo de cada sessão do Claude Code nos últimos 30 min.",
+  "source": "versioned",
+  "size": {
+    "w": 2,
+    "h": 3
+  },
+  "createdBy": "chat",
+  "createdAt": "2026-11-08T14:16:05.035Z"
+}

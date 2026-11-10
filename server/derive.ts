@@ -1,5 +1,6 @@
 // Derivados da camada 0: tudo calculado aqui, de forma determinística.
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { P, loadConfig, readJson, readJsonl, type ModelsCatalog } from "./store.ts";
 import { records, prices, type UsageRecord } from "./series.ts";
 import { listFlags, raiseFlag, clearFlag } from "./flags.ts";
@@ -253,6 +254,38 @@ export function getLastPulse(): PulseRecord | null {
   return lastPulse;
 }
 
+/** Ids de sessão de processos `claude` vivos neste macOS (vêm de --session-id). */
+function liveClaudeSessions(): Set<string> {
+  const ids = new Set<string>();
+  try {
+    const out = execFileSync("ps", ["-axo", "command="], { encoding: "utf8", timeout: 3000 });
+    for (const m of out.matchAll(/--session-id\s+([0-9a-f-]{36})/g)) ids.add(m[1]);
+  } catch {
+    // sem ps: nenhuma sessão é marcada como viva
+  }
+  return ids;
+}
+
+/** Sessões do Claude Code com resposta nos últimos 30 min, da mais cara para a mais barata. `viva` = processo ainda rodando. */
+function sessionsRecent(now: number): Snapshot["bySessionRecent"] {
+  const live = liveClaudeSessions();
+  const m = new Map<string, { project: string; models: Set<string>; lastAt: number; cost: number; cacheRead: number; n: number }>();
+  for (const r of since(now - 30 * 60_000)) {
+    if (r.source !== "claude-code" || !r.session) continue;
+    let s = m.get(r.session);
+    if (!s) m.set(r.session, (s = { project: r.project, models: new Set(), lastAt: 0, cost: 0, cacheRead: 0, n: 0 }));
+    s.models.add(r.model);
+    s.lastAt = Math.max(s.lastAt, r.ts);
+    s.cost += r.cost ?? 0;
+    s.cacheRead += r.cacheRead;
+    s.n += 1;
+  }
+  return [...m]
+    .map(([session, s]) => ({ session, viva: live.has(session), project: s.project, models: [...s.models], lastAt: new Date(s.lastAt).toISOString(), cost: s.cost, cacheRead: s.cacheRead, n: s.n }))
+    .sort((a, b) => Number(b.viva) - Number(a.viva) || b.cost - a.cost)
+    .slice(0, 12);
+}
+
 export function buildSnapshot(): Snapshot {
   const now = Date.now();
   const cfg = loadConfig();
@@ -349,6 +382,7 @@ export function buildSnapshot(): Snapshot {
     byModelWeek: group(r7, (r) => r.model),
     byProject: group(r7, (r) => r.project, 10),
     byProjectToday: group(rToday.filter((r) => r.source === "claude-code"), (r) => r.project, 10),
+    bySessionRecent: sessionsRecent(now),
     byAccount: group(r7, (r) => `${r.source === "soul" ? "Soul" : "Claude Code"} · ${r.account}`, 10),
     sidechainToday: { cost: sideCost, share: today.cost ? sideCost / today.cost : 0, opusShare: today.cost ? sideOpus / today.cost : 0 },
     heatmap: heat,
