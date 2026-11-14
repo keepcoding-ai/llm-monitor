@@ -1,0 +1,12 @@
+{
+  "id": "curva-de-gasto",
+  "title": "Curva de gasto",
+  "description": "Gasto acumulado das últimas 12 h, projeção do ritmo e sessões sem pausa.",
+  "source": "versioned",
+  "size": {
+    "w": 1,
+    "h": 3
+  },
+  "createdBy": "chat",
+  "createdAt": "2026-11-13T22:46:25.087Z"
+}

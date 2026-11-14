@@ -1,0 +1,12 @@
+{
+  "id": "acelerometro",
+  "title": "Acelerômetro",
+  "description": "Ritmo de gasto agora contra o normal desta hora, tendência e sessões suspeitas de processo preso.",
+  "source": "versioned",
+  "size": {
+    "w": 1,
+    "h": 3
+  },
+  "createdBy": "chat",
+  "createdAt": "2026-11-13T22:03:45.437Z"
+}
