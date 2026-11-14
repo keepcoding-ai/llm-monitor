@@ -75,5 +75,7 @@ export default defineConfig({
     proxy: { "/llm-monitor/api": { target: `http://127.0.0.1:${process.env.LLM_MONITOR_PORT || 4780}`, changeOrigin: false } },
     watch: { ignored: ["**/state/**"] },
   },
-  optimizeDeps: { include: ["react", "react-dom", "framer-motion", "@phosphor-icons/react"] },
+  // core-ui is a linked source package that gets pre-bundled (preserveSymlinks); Vite only
+  // invalidates that cache when the lockfile changes, so kit fixes never arrived. Re-bundle on every start.
+  optimizeDeps: { force: true, include: ["react", "react-dom", "framer-motion", "@phosphor-icons/react"] },
 });
