@@ -305,24 +305,6 @@ function Rail() {
 
 // ------------------------------------------------------------ chat (painel/drawer global)
 
-const GENERIC_CHIPS = ["O que mais gastou hoje?", "O que mudar para chegar à renovação com folga?", "Quanto custa uma sessão pesada agora?"];
-const CHIPS: Record<string, (verdict: ReturnType<typeof useSnapshot>) => string[]> = {
-  agora: (s) => {
-    const v = s?.verdict;
-    const d = v?.windows.find((w) => w.id === v.decisive);
-    const reset = d?.resetHuman?.split(",")[0];
-    return [
-      d ? `Por que ${d.id === "5h" ? "a sessão de 5 h" : d.id === "7d" ? "a semana" : "o Fable"} está subindo nesse ritmo hoje?` : "O que mais gastou hoje?",
-      `O que mudar para chegar à renovação${reset ? ` de ${reset}` : ""} com folga?`,
-      "Quanto custa uma sessão pesada agora?",
-    ];
-  },
-  ciclo: () => ["O que mais comeu a semana?", "Onde encaixo uma sessão pesada sem estourar?", "Como esta semana se compara à passada?"],
-  reserva: () => ["Qual conta Soul devo usar agora?", "Alguma conta está perto de ficar sem cota?"],
-  ajustes: () => ["Qual modelo padrão me faz chegar à renovação?", "Quanto a plataforma gastou hoje e com quê?"],
-  avisos: () => ["O que significa o aviso mais recente?", "Algum aviso pede ação minha agora?"],
-};
-
 function chatContext(page: string, s: ReturnType<typeof useSnapshot>) {
   const v = s?.verdict;
   return `tela: ${page}${v ? ` · veredito: ${v.headline}` : ""}`;
@@ -393,7 +375,7 @@ function ChatSidePanel({ tier, onClose }: { tier: "desktop" | "tv"; onClose: () 
         <ChatHeaderActions onClose={onClose} />
       </div>
       <div className="min-h-0 flex-1 p-4">
-        <ChatPanel chips={(CHIPS[page] ?? (() => GENERIC_CHIPS))(s)} context={chatContext(page, s)} autoFocus />
+        <ChatPanel context={chatContext(page, s)} autoFocus />
       </div>
     </motion.aside>
   );
@@ -413,7 +395,7 @@ function ChatDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
           <ChatHeaderActions onClose={onClose} />
         </DrawerHeader>
         <div className="min-h-0 flex-1 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-          <ChatPanel chips={(CHIPS[page] ?? (() => GENERIC_CHIPS))(s)} context={chatContext(page, s)} />
+          <ChatPanel context={chatContext(page, s)} />
         </div>
       </DrawerContent>
     </Drawer>
@@ -446,10 +428,12 @@ function useChatOpen(tier: ReturnType<typeof useTier>) {
 
 // ------------------------------------------------------------ páginas
 
-function PageTitle({ children, actions }: { children: ReactNode; actions?: ReactNode }) {
+/** `pinned` (edit mode): the row sticks to the top of <main>, full-bleed and opaque, so the edit actions stay reachable while the grid scrolls. */
+function PageTitle({ children, actions, pinned }: { children: ReactNode; actions?: ReactNode; pinned?: boolean }) {
+  const pin = "sticky top-0 z-30 -mx-4 flex-nowrap border-b bg-background px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:-mx-6 md:px-6 xl:-mx-8 xl:px-8 tv:-mx-12 tv:px-12";
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2">
-      <h2 className="text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>
+    <div className={`mb-4 flex items-center gap-x-3 gap-y-2 ${pinned ? pin : "flex-wrap"}`}>
+      <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>
       {actions}
     </div>
   );
@@ -458,7 +442,7 @@ function PageTitle({ children, actions }: { children: ReactNode; actions?: React
 /** Só nas páginas `grid`: alterna o modo de edição; em edição oferece a coleção. */
 function EditActions({ editing, onToggle }: { editing: boolean; onToggle: () => void }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex shrink-0 items-center gap-2">
       <Button variant={editing ? "default" : "outline"} size="sm" className="min-h-11 xl:min-h-9" aria-pressed={editing} onClick={onToggle}>
         {editing ? <Check /> : <PencilSimple />} {editing ? "Concluir" : "Editar página"}
       </Button>
@@ -491,7 +475,7 @@ function PageView({ def }: { def: PageDef }) {
   const [editing, setEditing] = useState(false);
   return (
     <>
-      <PageTitle actions={def.kind === "grid" ? <EditActions editing={editing} onToggle={() => setEditing(!editing)} /> : undefined}>{def.title}</PageTitle>
+      <PageTitle pinned={editing} actions={def.kind === "grid" ? <EditActions editing={editing} onToggle={() => setEditing(!editing)} /> : undefined}>{def.title}</PageTitle>
       {def.kind === "grid" && <PageGrid page={def.id} editing={editing} />}
       {def.kind === "single" && <SinglePage page={def.id} />}
       {def.kind === "settings" && <AjustesPage />}

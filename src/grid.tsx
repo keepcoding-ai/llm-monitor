@@ -3,7 +3,7 @@
 // painel de chat aberto, que estreita o <main>, reduz as colunas sozinho.
 // `grid-auto-rows` = meia coluna menos meio gap ⇒ 2 linhas + 1 gap = largura da coluna: célula 1×2 é quadrada.
 // h vai de 1 a 8 meias-linhas; w/h multiplicam (com os gaps).
-import { useEffect, useRef, useState, type ComponentType, type CSSProperties } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties } from "react";
 import {
   DndContext, DragOverlay, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, pointerWithin, useSensor, useSensors,
   type CollisionDetection, type DragEndEvent, type DragMoveEvent, type DragStartEvent,
@@ -19,7 +19,7 @@ import {
 import { BUILTINS } from "./builtins";
 import { SlotBoundary, useWidget } from "./runtime";
 import { removeSlot, reorderSlots, updateSlot, useLayout } from "./sdk";
-import { setHash } from "./router";
+import { setHash, useHash } from "./router";
 import type { PageDef, SlotSpec } from "../shared/snapshot";
 
 /** Slots de uma página na ordem do layout. */
@@ -36,7 +36,49 @@ const COL: Record<SlotSpec["w"], string> = {
 };
 const ROW: Record<SlotSpec["h"], string> = { 1: "row-span-1", 2: "row-span-2", 3: "row-span-3", 4: "row-span-4", 5: "row-span-5", 6: "row-span-6", 7: "row-span-7", 8: "row-span-8" };
 const MAX_H = 8;
-const spanCls = (spec: SlotSpec) => `min-h-0 min-w-0 ${COL[spec.w] ?? COL[1]} ${ROW[spec.h] ?? ROW[1]}`;
+// scroll margins keep a revealed cell clear of the sticky edit bar (top) and the mobile bottom bar
+const spanCls = (spec: SlotSpec) => `min-h-0 min-w-0 scroll-mt-20 scroll-mb-24 rounded-xl transition-shadow duration-500 ${COL[spec.w] ?? COL[1]} ${ROW[spec.h] ?? ROW[1]}`;
+
+// ------------------------------------------------------------ revelar o slot recém-adicionado
+
+// `want`: slot just added, waiting to be shown; `lit`: slot currently highlighted.
+let reveal: { want: string | null; lit: string | null } = { want: null, lit: null };
+const revealSubs = new Set<() => void>();
+const setReveal = (p: Partial<typeof reveal>) => {
+  reveal = { ...reveal, ...p };
+  revealSubs.forEach((f) => f());
+};
+const useRevealState = () => useSyncExternalStore((f) => (revealSubs.add(f), () => revealSubs.delete(f)), () => reveal);
+const litCls = (lit: string | null, id: string) => (lit === id ? "ring-2 ring-x-highlight" : "");
+
+/** Call after `addSlot`: the page scrolls to the new cell and highlights it as soon as nothing covers the grid. */
+export const revealSlot = (id: string) => setReveal({ want: id });
+
+function useReveal(slots: SlotSpec[]) {
+  const { want, lit } = useRevealState();
+  const hash = useHash();
+  const reduce = useReducedMotion();
+  const present = Boolean(want && slots.some((s) => s.id === want));
+  // the collection panel and the mobile chat drawer sit on top of the grid: wait until they close
+  const covered = hash === "colecao" || hash === "chat";
+  useEffect(() => {
+    if (!want || !present || covered) return;
+    // let the closing panel release the scroll lock first
+    const t = setTimeout(() => {
+      const el = [...document.querySelectorAll<HTMLElement>("[data-cell]")].find((x) => x.dataset.cell === want);
+      el?.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
+      setReveal({ want: null, lit: want });
+    }, 250);
+    return () => clearTimeout(t);
+  }, [want, present, covered, reduce]);
+  useEffect(() => {
+    if (!lit) return;
+    const t = setTimeout(() => setReveal({ lit: null }), 1800);
+    return () => clearTimeout(t);
+  }, [lit]);
+  // leaving the page drops a pending reveal
+  useEffect(() => () => setReveal({ want: null, lit: null }), []);
+}
 
 // ------------------------------------------------------------ corpo do slot
 
@@ -153,8 +195,9 @@ export function SlotCard({ spec, cell, still }: { spec: SlotSpec; cell?: boolean
 // ------------------------------------------------------------ grade
 
 export function SlotCell({ spec }: { spec: SlotSpec }) {
+  const { lit } = useRevealState();
   return (
-    <div className={spanCls(spec)}>
+    <div data-cell={spec.id} className={`${spanCls(spec)} ${litCls(lit, spec.id)}`}>
       <SlotCard spec={spec} cell />
     </div>
   );
@@ -244,8 +287,9 @@ function EditableCell({ spec, pages, act }: { spec: SlotSpec; pages: PageDef[]; 
   const reduce = useReducedMotion();
   const sortable = useSortable({ id: spec.id, transition: reduce ? null : { duration: 220, easing: "cubic-bezier(0.2, 0, 0, 1)" } });
   const { setNodeRef, transform, transition, isDragging } = sortable;
+  const { lit } = useRevealState();
   return (
-    <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }} className={`relative ${spanCls(spec)} ${isDragging ? "z-20 opacity-40" : ""}`}>
+    <div ref={setNodeRef} data-cell={spec.id} style={{ transform: CSS.Translate.toString(transform), transition }} className={`relative ${spanCls(spec)} ${litCls(lit, spec.id)} ${isDragging ? "z-20 opacity-40" : ""}`}>
       <div inert className="h-full select-none opacity-60">
         <SlotCard spec={spec} cell still />
       </div>
@@ -363,8 +407,9 @@ function EditableGrid({ page, slots, className, style }: { page: string; slots: 
 export function PageGrid({ page, editing = false }: { page: string; editing?: boolean }) {
   const layout = useLayout();
   const slots = useSlots(page);
+  useReveal(slots);
   if (!layout) return <Skeleton className="h-40" />;
-  const cls = "grid grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:1rem] @2xl:[--cols:2] @5xl:[--cols:3] @5xl:[--gap:1.5rem]";
+  const cls ="grid grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:1rem] @2xl:[--cols:2] @5xl:[--cols:3] @5xl:[--gap:1.5rem]";
   // row = (column width − gap) / 2, so two rows plus the gap between them are exactly one column wide
   const style = { gridAutoRows: "calc(((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols) - var(--gap)) / 2)" };
   return (

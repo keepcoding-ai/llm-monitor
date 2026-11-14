@@ -3,11 +3,11 @@
 // (mensagens, streaming, rascunho) mora num store de módulo: fechar e reabrir o
 // painel/drawer não perde histórico nem rascunho.
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import { Button, InputGroup, InputGroupAddon, InputGroupTextarea, Markdown, Spinner, ErrorNotice, ErrorNoticeMessage, ErrorNoticeAction, Tooltip, TooltipContent, TooltipTrigger, Collapsible, CollapsibleContent, CollapsibleTrigger, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@atrium/core-ui";
 import { ArrowClockwise, ArrowUp, Check, CaretRight, Cube, FilePdf, FileText, MagnifyingGlass, NotePencil, Paperclip, PencilSimple, Robot, Stop, Terminal, Wrench, X } from "@phosphor-icons/react";
 import { API, addSlot, call, onChat, usd, useLayout, useLive, useRestartPending, type ChatMsg, type ChatStep } from "./sdk";
 import { go, setHash, usePage } from "./router";
+import { revealSlot } from "./grid";
 
 type Pending = { id: string; name: string; type: string; data: string; url: string };
 type Streaming = { id: string; text: string; steps: ChatStep[]; startedAt: number };
@@ -200,7 +200,7 @@ function WidgetCardView({ card }: { card: WidgetCard }) {
     setBusy(true);
     setErr(null);
     try {
-      await addSlot(current.id, card.id);
+      revealSlot((await addSlot(current.id, card.id)).id);
       setAdded(true);
     } catch (e) {
       setErr((e as Error).message);
@@ -213,11 +213,14 @@ function WidgetCardView({ card }: { card: WidgetCard }) {
     <div className={`flex flex-col gap-2 rounded-lg border p-3 text-sm ${failed ? "border-x-error/40" : ""}`} data-testid="chat-widget-card" data-status={status}>
       <div className="flex items-start gap-2">
         {status === "testing" ? <Spinner className="mt-0.5 size-4 shrink-0" /> : <Cube className={`mt-0.5 size-4 shrink-0 ${failed ? "text-x-error" : "text-x-success"}`} />}
-        <span className={failed ? "text-x-error" : ""}>
+        <span className={`min-w-0 flex-1 ${failed ? "text-x-error" : ""}`}>
           {status === "active" && <>Widget <strong>{card.title}</strong> pronto (versão {card.v})</>}
           {status === "testing" && <>Widget <strong>{card.title}</strong> aguardando teste de tela</>}
           {failed && <>Widget <strong>{card.title}</strong> reprovado no teste</>}
         </span>
+        <Button variant="ghost" size="icon" className="-mr-1 -mt-1 size-7 shrink-0 text-muted-foreground" aria-label={`Fechar aviso do widget ${card.title}`} onClick={() => set({ cards: st.cards.filter((c) => c.id !== card.id) })}>
+          <X />
+        </Button>
       </div>
       {status === "active" && (
         <div className="flex flex-wrap gap-2">
@@ -248,7 +251,7 @@ function typicalCost(msgs: ChatMsg[]): number | null {
   return c.length ? c[Math.floor(c.length / 2)] : null;
 }
 
-export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; context: string; autoFocus?: boolean }) {
+export function ChatPanel({ context, autoFocus }: { context: string; autoFocus?: boolean }) {
   useEffect(start, []);
   const s = useChat();
   const connected = useLive((x) => x.connected);
@@ -331,7 +334,7 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
             Ver anteriores ({hidden})
           </Button>
         )}
-        {s.loaded && s.msgs.length === 0 && !busy && <p className="text-sm text-muted-foreground">Pergunte o que a tela não respondeu. Escolha uma pergunta pronta ou escreva a sua.</p>}
+        {s.loaded && s.msgs.length === 0 && !busy && <p className="text-sm text-muted-foreground">Pergunte o que a tela não respondeu.</p>}
         {visible.map((m) =>
           m.role === "user" ? (
             <div key={m.id} className="flex max-w-[85%] flex-col gap-2 self-end whitespace-pre-wrap break-words rounded-2xl bg-secondary px-3 py-2 text-sm">
@@ -389,27 +392,6 @@ export function ChatPanel({ chips, context, autoFocus }: { chips: string[]; cont
           <ErrorNoticeAction onClick={() => void send(s.draft || s.lastQuestion, context)}>Tentar de novo</ErrorNoticeAction>
         </ErrorNotice>
       )}
-
-      <AnimatePresence initial={false}>
-        {!busy && chips.length > 0 && (
-          <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="flex flex-wrap gap-1.5" aria-label="Perguntas prontas">
-            {chips.map((c) => (
-              <Button
-                key={c}
-                variant="outline"
-                size="sm"
-                className="h-auto min-h-9 max-w-full whitespace-normal! rounded-full py-1.5 text-left text-xs"
-                onClick={() => {
-                  set({ draft: c });
-                  field.current?.focus();
-                }}
-              >
-                {c}
-              </Button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {s.pending.length > 0 && (
         <div className="flex flex-wrap gap-2" aria-label="Anexos da mensagem">

@@ -6,6 +6,7 @@ import { Badge, Button, ErrorNotice, ErrorNoticeMessage, ResponsivePanel } from 
 import { Check, Plus } from "@phosphor-icons/react";
 import { addSlot, useLayout } from "./sdk";
 import { setHash, useHash, useMedia } from "./router";
+import { revealSlot } from "./grid";
 import type { PageDef, WidgetMeta } from "../shared/snapshot";
 
 const ORIGIN: Record<WidgetMeta["createdBy"], string> = { system: "do sistema", chat: "criado no chat", owner: "criado por você" };
@@ -20,7 +21,7 @@ function CollectionBody({ page }: { page: PageDef }) {
     setBusy(m.id);
     setErr(null);
     try {
-      await addSlot(page.id, m.id);
+      revealSlot((await addSlot(page.id, m.id)).id);
       setAdded(m.id);
       setTimeout(() => setAdded((a) => (a === m.id ? null : a)), 2000);
     } catch (e) {
