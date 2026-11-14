@@ -286,6 +286,31 @@ function sessionsRecent(now: number): Snapshot["bySessionRecent"] {
     .slice(0, 12);
 }
 
+/** Série de 5 min das últimas 12 h: total e as 6 sessões do Claude Code mais caras na janela. */
+function slopeSeries(now: number): Snapshot["slope"] {
+  const step = 5 * 60_000, N = 144;
+  const start = Math.floor(now / step) * step - (N - 1) * step;
+  const total = new Array<number>(N).fill(0);
+  const per = new Map<string, { project: string; sum: number; cost: number[] }>();
+  for (const r of since(start)) {
+    const i = Math.floor((r.ts - start) / step);
+    if (i < 0 || i >= N) continue;
+    const c = r.cost ?? 0;
+    total[i] += c;
+    if (r.source !== "claude-code" || !r.session) continue;
+    let p = per.get(r.session);
+    if (!p) per.set(r.session, (p = { project: r.project, sum: 0, cost: new Array<number>(N).fill(0) }));
+    p.sum += c;
+    p.cost[i] += c;
+  }
+  const live = liveClaudeSessions();
+  const sessions = [...per]
+    .sort((a, b) => b[1].sum - a[1].sum)
+    .slice(0, 6)
+    .map(([session, p]) => ({ session, project: p.project, viva: live.has(session), cost: p.cost }));
+  return { start: new Date(start).toISOString(), stepMin: 5, total, sessions };
+}
+
 export function buildSnapshot(): Snapshot {
   const now = Date.now();
   const cfg = loadConfig();
@@ -383,6 +408,7 @@ export function buildSnapshot(): Snapshot {
     byProject: group(r7, (r) => r.project, 10),
     byProjectToday: group(rToday.filter((r) => r.source === "claude-code"), (r) => r.project, 10),
     bySessionRecent: sessionsRecent(now),
+    slope: slopeSeries(now),
     byAccount: group(r7, (r) => `${r.source === "soul" ? "Soul" : "Claude Code"} · ${r.account}`, 10),
     sidechainToday: { cost: sideCost, share: today.cost ? sideCost / today.cost : 0, opusShare: today.cost ? sideOpus / today.cost : 0 },
     heatmap: heat,

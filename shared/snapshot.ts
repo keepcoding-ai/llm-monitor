@@ -64,6 +64,8 @@ export type Snapshot = {
   byProjectToday: Named[];
   /** sessões do Claude Code com resposta nos últimos 30 min; `viva` = processo `claude` ainda rodando (vivas primeiro) */
   bySessionRecent: { session: string; viva: boolean; project: string; models: string[]; lastAt: string; cost: number; cacheRead: number; n: number }[];
+  /** gasto em fatias de 5 min nas últimas 12 h (144 pontos, do mais antigo ao atual), total e das sessões mais caras */
+  slope: { start: string; stepMin: number; total: number[]; sessions: { session: string; project: string; viva: boolean; cost: number[] }[] };
   byAccount: Named[];
   sidechainToday: { cost: number; share: number; opusShare: number };
   heatmap: number[][]; // [dia-da-semana 0=dom][hora] custo médio (28 dias)
