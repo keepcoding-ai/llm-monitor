@@ -198,10 +198,24 @@ export function counterSeries(points: CounterPoint[]): { t: number; v: number }[
     laterMin.set(x.s, m == null ? x.v : Math.min(m, x.v));
   }
   const noSpike = p.filter((_, i) => !spike[i]);
-  const out: { t: number; v: number }[] = [];
+  // Zeramento antecipado: o fornecedor pode zerar a cota mantendo o mesmo resetsAt. Reconhece-se por
+  // uma queda GRANDE (>= RESET_DROP pontos abaixo do máximo; o atraso de sessão ociosa fica em 3-8)
+  // que se SUSTENTA: depois dela há ao menos RESET_MIN_AFTER leituras e NENHUMA (de qualquer sessão)
+  // volta a >= máximo antigo. Atraso passageiro (36->32->36, 20->3->20) volta ao máximo, então não conta.
+  // Confirmado o zeramento, a série recomeça na leitura da queda.
+  const RESET_DROP = 10;
+  const RESET_MIN_AFTER = 2;
+  const sufMax = new Array<number>(noSpike.length + 1).fill(-Infinity);
+  for (let i = noSpike.length - 1; i >= 0; i--) sufMax[i] = Math.max(noSpike[i].v, sufMax[i + 1]);
+  let out: { t: number; v: number }[] = [];
   let max = -Infinity;
-  for (const x of noSpike) {
-    if (x.v < max) continue;
+  for (let i = 0; i < noSpike.length; i++) {
+    const x = noSpike[i];
+    if (x.v < max) {
+      const sustained = max - x.v >= RESET_DROP && noSpike.length - 1 - i >= RESET_MIN_AFTER && sufMax[i] < max;
+      if (!sustained) continue;
+      out = [];
+    }
     max = x.v;
     out.push(x);
   }

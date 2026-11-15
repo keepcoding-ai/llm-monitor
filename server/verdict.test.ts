@@ -156,6 +156,18 @@ test("pico isolado não move o contador", () => {
   assert.deepEqual(counterSeries([{ t: NOW, v: 29, s: "a" }, { t: NOW + MIN, v: 6, s: "b" }, { t: NOW + 2 * MIN, v: 6, s: "b" }]).map((p) => p.v), [29]);
 });
 
+test("zeramento antecipado com o mesmo resetsAt reinicia a série", () => {
+  // sobe até 36, o fornecedor zera (d3 informa 0) e várias sessões sobem até 8
+  const seq: [string, number][] = [["a", 30], ["b", 33], ["a", 36], ["b", 32], ["a", 36], ["d3", 0], ["e", 1], ["d3", 3], ["f", 5], ["e", 6], ["d3", 8], ["f", 8]];
+  const pts = seq.map(([s, v], i) => ({ t: NOW + i * MIN, v, s }));
+  const out = counterSeries(pts);
+  assert.equal(out.at(-1)!.v, 8);
+  assert.ok(out.every((p, i) => i === 0 || p.v >= out[i - 1].v));
+  // queda sem sustentação (volta ao máximo) continua sendo ruído
+  const noise = [["a", 20], ["old", 3], ["a", 20], ["a", 21]].map(([s, v], i) => ({ t: NOW + i * MIN, v: v as number, s: s as string }));
+  assert.deepEqual(counterSeries(noise).map((p) => p.v), [20, 20, 21]);
+});
+
 test("renovação diferente = outra conta: aviso, e o veredito segue a mais recente", () => {
   const a: Reading = { at: iso(NOW - 2 * MIN), session: "s-aaaa", seven: { usedPct: 29, resetsAt: WEEK_RESET } };
   const b: Reading = { at: iso(NOW - MIN), session: "s-bbbb", seven: { usedPct: 6, resetsAt: OTHER_WEEK_RESET } };
