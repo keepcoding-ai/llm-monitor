@@ -16,6 +16,15 @@
     "model": "haiku",
     "autoEscalate": false
   },
-  "chatModel": "haiku",
+  "chat": {
+    "model": "opus",
+    "bypassPermissions": true,
+    "dirs": [
+      "D:/atrium"
+    ],
+    "timeoutMin": 60,
+    "ignoreBudget": true
+  },
+  "chatModel": "opus",
   "platformDailyBudgetUSD": 2
 }
