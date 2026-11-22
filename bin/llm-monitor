@@ -4,9 +4,8 @@
 APP_DIR="${LLM_MONITOR_DIR:-/d/atrium/workspace/llm-monitor}"
 RUN_DIR="/d/atrium/.tmp/llm-monitor"
 PID_FILE="$RUN_DIR/run.pid"
-FRONT_PORT=4781
-BACK_PORT=4780
-URL="http://127.0.0.1:$FRONT_PORT/llm-monitor/"
+PORT="${LLM_MONITOR_PORT:-4780}"
+URL="http://localhost:$PORT/llm-monitor/"
 
 http_code() { curl -s -o /dev/null -m 3 -w "%{http_code}" "$URL" 2>/dev/null; }
 
@@ -20,26 +19,25 @@ cmdline_of() {
   powershell.exe -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"ProcessId=$1\").CommandLine" 2>/dev/null | tr -d '\r'
 }
 
-# true se algum ancestral de $1 e o PID do run.pid
-has_launcher_ancestor() {
-  local lp; lp="$(cat "$PID_FILE" 2>/dev/null | tr -d '\r\n ')"
-  [ -z "$lp" ] && return 1
-  local r
-  r="$(powershell.exe -NoProfile -Command "\$c=$1; \$n=0; while (\$c -and \$n -lt 32) { \$pp=(Get-CimInstance Win32_Process -Filter \"ProcessId=\$c\").ParentProcessId; if (\$pp -eq $lp) { 'yes'; break }; \$c=\$pp; \$n++ }" 2>/dev/null | tr -d '\r\n ')"
-  [ "$r" = "yes" ]
-}
-
-# $1=pid $2=1 se e o PID do run.pid (o proprio lancador e sempre nosso)
-# Dono da porta e aceito se: CommandLine contem a pasta do app, ou um ancestral e o lancador.
+# true se $1 e o node do llm-monitor servido: a linha de comando precisa ter
+# dist-server/index.mjs dentro da pasta do app (vale para o PID do run.pid tambem:
+# protege contra PID reaproveitado).
 is_ours() {
-  [ "$2" = "1" ] && [ -n "$(cmdline_of "$1")" ] && return 0
   local cl; cl="$(cmdline_of "$1")"
   [ -z "$cl" ] && return 1
-  local fwd="$APP_DIR" back; back="$(cygpath -w "$APP_DIR" 2>/dev/null)"
-  local fwd2; fwd2="$(cygpath -m "$APP_DIR" 2>/dev/null)"
-  if echo "$cl" | grep -qiF -e "$fwd" -e "$fwd2" -e "$back"; then return 0; fi
-  has_launcher_ancestor "$1" && return 0
-  return 1
+  local w m; w="$(cygpath -w "$APP_DIR" 2>/dev/null)"; m="$(cygpath -m "$APP_DIR" 2>/dev/null)"
+  echo "$cl" | grep -qiF "dist-server" || return 1
+  echo "$cl" | grep -qiF -e "$w" -e "$m" -e "$APP_DIR"
+}
+
+# true se precisa buildar: dist/ ou dist-server/ ausentes ou mais velhos que src/ ou server/
+needs_build() {
+  local d
+  for d in dist/index.html dist-server/index.mjs; do [ -f "$APP_DIR/$d" ] || return 0; done
+  local newest_src; newest_src="$(find "$APP_DIR/src" "$APP_DIR/server" -type f -newer "$APP_DIR/dist-server/index.mjs" 2>/dev/null | head -1)"
+  [ -n "$newest_src" ] && return 0
+  newest_src="$(find "$APP_DIR/src" "$APP_DIR/server" -type f -newer "$APP_DIR/dist/index.html" 2>/dev/null | head -1)"
+  [ -n "$newest_src" ]
 }
 
 # abre o navegador sem herdar o console (cmd /c start segura o terminal)
@@ -51,7 +49,8 @@ open_browser() {
 }
 
 print_pids() {
-  echo "PIDs: backend($BACK_PORT)=$(port_pids $BACK_PORT | tr '\n' ' ') front($FRONT_PORT)=$(port_pids $FRONT_PORT | tr '\n' ' ')"
+  echo "PIDs: port($PORT)=$(port_pids $PORT | tr '
+' ' ')"
 }
 
 cmd_help() {
@@ -61,7 +60,7 @@ llm-monitor - launch and manage the LLM Monitor
 Usage:
   llm-monitor          start the app (if not running) and open it in the browser
   llm-monitor --no-open  start the app without opening the browser
-  llm-monitor status   tell whether it is up and who owns ports $BACK_PORT/$FRONT_PORT
+  llm-monitor status   tell whether it is up and who owns port $PORT
   llm-monitor stop     stop it (only processes that belong to llm-monitor)
   llm-monitor help     this text
 
@@ -82,7 +81,7 @@ cmd_stop() {
   [ -f "$PID_FILE" ] && pids="$(cat "$PID_FILE" | tr -d '\r\n ')|1"
   local list=""
   [ -n "$pids" ] && list="$pids"
-  for p in $(port_pids $BACK_PORT) $(port_pids $FRONT_PORT); do list="$list $p|0"; done
+  for p in $(port_pids $PORT); do list="$list $p|0"; done
   [ -z "$list" ] && { echo "nothing to stop"; return 0; }
   local seen=" " item pid flag victims=""
   # 1a passada: decide tudo antes de matar (matar o lancador apaga a ancestralidade dos filhos)
@@ -90,7 +89,7 @@ cmd_stop() {
     pid="${item%%|*}"; flag="${item##*|}"
     case "$seen" in *" $pid "*) continue;; esac
     seen="$seen$pid "
-    if is_ours "$pid" "$flag"; then victims="$victims $pid"
+    if is_ours "$pid"; then victims="$victims $pid"
     else echo "PID $pid does not look like llm-monitor - NOT touching it"; fi
   done
   # 2a passada: kill por PID, com arvore
@@ -128,21 +127,25 @@ R
     open_browser
     return 0
   fi
-  if [ -n "$(port_pids $BACK_PORT)$(port_pids $FRONT_PORT)" ]; then
-    echo "ports $BACK_PORT/$FRONT_PORT are in use but not answering as llm-monitor."
+  if [ -n "$(port_pids $PORT)" ]; then
+    echo "port $PORT is in use but not answering as llm-monitor."
     print_pids
     echo "Not killing anything. Check with: llm-monitor status"
     return 1
   fi
   mkdir -p "$RUN_DIR"
+  if needs_build; then
+    echo "building (dist/ missing or older than sources)..."
+    (cd "$APP_DIR" && npm run build) || { echo "build failed"; return 1; }
+  fi
   local winpath; winpath="$(cygpath -w "$APP_DIR")"
   local pid
-  pid="$(powershell.exe -NoProfile -Command "\$p = Start-Process -FilePath node -ArgumentList 'scripts/dev.mjs' -WorkingDirectory '$winpath' -WindowStyle Hidden -PassThru; \$p.Id" | tr -d '\r\n ')"
+  pid="$(LLM_MONITOR_PORT="$PORT" WSLENV= powershell.exe -NoProfile -Command "\$p = Start-Process -FilePath node -ArgumentList '--max-old-space-size=96','--max-semi-space-size=1','$winpath\dist-server\index.mjs' -WorkingDirectory '$winpath' -WindowStyle Hidden -PassThru; \$p.Id" | tr -d '\r\n ')"
   [ -z "$pid" ] && { echo "failed to launch"; return 1; }
   echo "$pid" > "$PID_FILE"
   echo "launching (PID $pid), waiting for $URL ..."
   local i
-  for i in $(seq 1 180); do
+  for i in $(seq 1 60); do
     [ "$(http_code)" = "200" ] && break
     sleep 1
   done
@@ -151,7 +154,7 @@ R
     print_pids
     open_browser
   else
-    echo "timeout: not answering after 180s (launcher PID $pid)"; return 1
+    echo "timeout: not answering after 60s (launcher PID $pid)"; return 1
   fi
 }
 
@@ -161,6 +164,6 @@ case "${1:-}" in
   status)  cmd_status ;;
   stop)    cmd_stop ;;
   help|-h|--help) cmd_help ;;
-  __check) is_ours "$2" "${3:-0}" && echo "PID $2: ours (would stop)" || echo "PID $2: NOT ours (would refuse)" ;;
+  __check) is_ours "$2" && echo "PID $2: ours (would stop)" || echo "PID $2: NOT ours (would refuse)" ;;
   *) echo "unknown command: $1"; cmd_help; exit 2 ;;
 esac
