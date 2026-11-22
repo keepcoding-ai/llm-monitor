@@ -19,6 +19,7 @@ import { UPLOADS, type ChatUpload, chat, chatHistory, listProposals, pulse, rese
 import { configureSystem, closeServer, listenWithRetry, requestRestart } from "./system.ts";
 import { mergeConfig } from "./config-merge.ts";
 import type { Server } from "node:http";
+import { mountStatic } from "./static.ts";
 import { createPulseScheduler } from "./pulse-schedule.ts";
 import { z } from "zod";
 import { addSlot, addVersionFromFile, createPage, createWidget, deletePage, deleteSlot, loadLayout, mutateLayout, pendingTestList, proposeWidget, reorderPages, reorderSlots, reportTest, restoreWidget, undoWidget, updatePage, updateSlot } from "./widgets.ts";
@@ -481,12 +482,15 @@ api.post("/widgets/:id/restore/:v", (c) => {
 const app: Hono = new Hono();
 app.route("/llm-monitor/api/v1", api);
 app.get("/", (c) => c.redirect("/llm-monitor/"));
+// modo servido: com dist/ pronto o próprio server entrega o front (sem Vite); sem dist/ (dev) o Vite cuida da UI
+const servesFront = mountStatic(app);
 
 const server = listenWithRetry(() => serve({ fetch: app.fetch, port: PORT, hostname: "127.0.0.1" }) as Server, {
   port: PORT,
   hostname: "127.0.0.1",
   onListening: () => {
     console.log(`[llm-monitor] API em http://127.0.0.1:${PORT}/llm-monitor/api/v1 (pid ${process.pid})`);
+    if (servesFront) console.log(`[llm-monitor] UI em http://localhost:${PORT}/llm-monitor/`);
     void cycle().then(scheduleCycle);
     schedulePulse();
   },
