@@ -33,7 +33,7 @@ const pt = (v: number, r = P.r) => {
 };
 const arco = (v0: number, v1: number) => {
   const a = pt(v0), b = pt(v1);
-  return ;
+  return `M ${a.x} ${a.y} A ${P.r} ${P.r} 0 0 1 ${b.x} ${b.y}`;
 };
 
 export default function Acelerometro() {
