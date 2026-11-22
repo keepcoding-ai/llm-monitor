@@ -1,13 +1,14 @@
 // Caminhos e persistência em disco. Todo estado da plataforma vive em state/,
 // dentro da pasta do app. Escrita sempre atômica (tmp + rename).
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync, appendFileSync, openSync, readSync, closeSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 export const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-export const STATE = join(APP_ROOT, "state");
+// LLM_MONITOR_STATE: pasta de estado alternativa (testes e instâncias paralelas nunca dividem o series.jsonl)
+export const STATE = process.env.LLM_MONITOR_STATE ? resolve(process.env.LLM_MONITOR_STATE) : join(APP_ROOT, "state");
 export const WIDGETS_DIR = join(APP_ROOT, "widgets");
 /** Pasta onde a plataforma roda os próprios `claude -p` — é por ela (o cwd
  *  gravado nos jsonl) que o coletor separa o gasto da plataforma. */
@@ -75,6 +76,69 @@ export function readJsonl<T>(path: string): T[] {
     }
   }
   return out;
+}
+
+/**
+ * Leitor incremental de um jsonl append-only com campo `at` (ISO): lê só os bytes novos desde a última
+ * chamada e retém apenas as linhas dos últimos `keepMs`. Evita reler/parsear o arquivo inteiro
+ * (statusline-history.jsonl passa dos 8 MB) a cada snapshot. Devolve a lista compartilhada: não mutar.
+ */
+export function createTailReader<T extends { at: string }>(path: string, keepMs: number): () => T[] {
+  let rows: T[] = [];
+  let pos = 0;
+  let rest: Buffer = Buffer.alloc(0);
+  const CHUNK = 1024 * 1024;
+  return () => {
+    let size: number;
+    try {
+      size = statSync(path).size;
+    } catch {
+      rows = [];
+      pos = 0;
+      rest = Buffer.alloc(0);
+      return rows;
+    }
+    if (size < pos) {
+      rows = [];
+      pos = 0;
+      rest = Buffer.alloc(0); // arquivo encolheu/foi trocado: recomeça
+    }
+    if (size > pos) {
+      const fd = openSync(path, "r");
+      try {
+        const buf = Buffer.allocUnsafe(CHUNK);
+        const floor = Date.now() - keepMs;
+        while (pos < size) {
+          const n = readSync(fd, buf, 0, Math.min(CHUNK, size - pos), pos);
+          if (n === 0) break;
+          pos += n;
+          const data = rest.length ? Buffer.concat([rest, buf.subarray(0, n)]) : buf.subarray(0, n);
+          const nl = data.lastIndexOf(0x0a);
+          if (nl === -1) {
+            rest = Buffer.from(data);
+            continue;
+          }
+          rest = Buffer.from(data.subarray(nl + 1)); // linha final sem quebra fica para a próxima chamada
+          for (const line of data.toString("utf8", 0, nl).split("\n")) {
+            if (!line) continue;
+            try {
+              const r = JSON.parse(line) as T;
+              if (Date.parse(r.at) >= floor) rows.push(r);
+            } catch {
+              /* linha rasgada */
+            }
+          }
+        }
+      } finally {
+        closeSync(fd);
+      }
+    }
+    const floor = Date.now() - keepMs;
+    let k = 0;
+    while (k < rows.length && !(Date.parse(rows[k].at) >= floor)) k++;
+    if (k > 0) rows = rows.slice(k);
+    return rows;
+  };
 }
 
 // ---------------------------------------------------------------- config

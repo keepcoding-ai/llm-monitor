@@ -5,7 +5,7 @@ import { streamSSE } from "hono/streaming";
 import { readFileSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { APP_ROOT, P, appendJsonl, loadConfig, seedState, writeJson, readJson, readJsonl, type Config, type ModelsCatalog } from "./store.ts";
-import { loadSeries, records } from "./series.ts";
+import { loadSeries, stats, trimSeries } from "./series.ts";
 import { collectClaude, meta } from "./collector/claude.ts";
 import { collectSoul, activateSoulAccount } from "./collector/soul.ts";
 import { saveOffsets } from "./collector/incremental.ts";
@@ -42,7 +42,7 @@ async function cycle() {
   if (collecting) return;
   collecting = true;
   try {
-    const a = await collectClaude((n) => publish("progress", { files: n, records: records.length }));
+    const a = await collectClaude((n) => publish("progress", { files: n, records: stats.total }));
     const b = await collectSoul();
     await getOfficialUsage(); // respeita TTL e backoff; nunca lança
     revertTempDefault();
@@ -52,7 +52,7 @@ async function cycle() {
     writeJson(P.derived, snapshot);
     flushFlags();
     publish("snapshot", snapshot);
-    if (a + b > 0) console.log(`[coletor] +${a} claude-code, +${b} soul (total ${records.length}) em ${meta.lastCycleMs} ms`);
+    if (a + b > 0) console.log(`[coletor] +${a} claude-code, +${b} soul (total ${stats.total}) em ${meta.lastCycleMs} ms`);
   } catch (e) {
     collectorError = (e as Error).stack ?? String(e);
     console.error("[coletor] falhou:", collectorError);
@@ -131,7 +131,9 @@ api.get("/events", (c) =>
     const queue: { event: string; data: string }[] = [];
     let wake: (() => void) | null = null;
     const unsub = subscribe((e) => {
-      queue.push({ event: e.event, data: JSON.stringify(e.data) });
+      queue.push({ event: e.event, data: e.json() });
+      // cliente que não escoa (aba congelada/rede presa): teto na fila — descarta o mais antigo
+      if (queue.length > 200) queue.splice(0, queue.length - 200);
       wake?.();
     });
     stream.onAbort(() => {
@@ -139,7 +141,7 @@ api.get("/events", (c) =>
       wake?.();
     });
     if (snapshot) await stream.writeSSE({ event: "snapshot", data: JSON.stringify(snapshot) });
-    else await stream.writeSSE({ event: "progress", data: JSON.stringify({ files: 0, records: records.length }) });
+    else await stream.writeSSE({ event: "progress", data: JSON.stringify({ files: 0, records: stats.total }) });
     await stream.writeSSE({ event: "layout", data: JSON.stringify(loadLayout()) });
     for (const t of pendingTestList()) await stream.writeSSE({ event: "widget-test", data: JSON.stringify(t) });
     while (!stream.aborted) {

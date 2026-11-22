@@ -1,8 +1,8 @@
 // Derivados da camada 0: tudo calculado aqui, de forma determinística.
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { P, loadConfig, readJson, readJsonl, type ModelsCatalog } from "./store.ts";
-import { records, prices, type UsageRecord } from "./series.ts";
+import { P, createTailReader, loadConfig, readJson, readJsonl, type ModelsCatalog } from "./store.ts";
+import { records, stats, prices, type UsageRecord } from "./series.ts";
 import { listFlags, raiseFlag, clearFlag } from "./flags.ts";
 import { meta, activeClaudeAccount } from "./collector/claude.ts";
 import { soulPools, soulVocabulary } from "./collector/soul.ts";
@@ -102,7 +102,7 @@ export function readLimits(now = Date.now()): Limits {
 function autonomy(limits: Limits, recent: UsageRecord[], now: number): Autonomy {
   if (limits.state !== "missing" && limits.fiveHour) {
     const w = limits.fiveHour;
-    const hist = readJsonl<{ at: string; five?: LimitWindow }>(P.statuslineHistory).filter(
+    const hist = (statuslineRows() as { at: string; five?: LimitWindow }[]).filter(
       (h) => h.five && h.five.resetsAt === w.resetsAt && now - Date.parse(h.at) < 90 * 60_000,
     );
     let rate = 0;
@@ -147,8 +147,10 @@ function toWin(x: any) {
 export function readFableManual(): FableManual | null {
   return readJson<FableManual | null>(P.fableManual, null);
 }
+// só os últimos 8 dias do histórico (o resto do arquivo nunca é consultado), lidos de forma incremental
+const statuslineRows = createTailReader<Reading>(P.statuslineHistory, 8 * D);
 export function readHistory(now: number): Reading[] {
-  return readJsonl<Reading>(P.statuslineHistory).filter((h) => now - Date.parse(h.at) <= 8 * D);
+  return statuslineRows().filter((h) => now - Date.parse(h.at) <= 8 * D);
 }
 export function buildVerdict(now: number, lastUsageAt: number | null, history: Reading[] = readHistory(now)): Verdict {
   let statusline: Reading | null = null;
@@ -394,7 +396,7 @@ export function buildSnapshot(): Snapshot {
   const byModel = group(rToday, (r) => r.model);
   const snap: Snapshot = {
     at: new Date(now).toISOString(),
-    collector: { lastCycleMs: meta.lastCycleMs, filesScanned: meta.filesScanned, records: records.length, backfillDone: meta.backfillDone, intervalSec: cfg.collectIntervalSec, claudeVersion: meta.lastVersion, priceTable: prices().version, priceSource: prices().source },
+    collector: { lastCycleMs: meta.lastCycleMs, filesScanned: meta.filesScanned, records: stats.total, backfillDone: meta.backfillDone, intervalSec: cfg.collectIntervalSec, claudeVersion: meta.lastVersion, priceTable: prices().version, priceSource: prices().source },
     account: activeClaudeAccount(),
     settings,
     catalog: { models: [...new Set([...catalog.claude.models, ...seenModels])], efforts: catalog.claude.efforts, soulModels: soulVocabulary.models, soulEfforts: soulVocabulary.efforts },

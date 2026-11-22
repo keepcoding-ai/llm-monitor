@@ -1,7 +1,9 @@
 // A série única normalizada: um registro por resposta de modelo (Claude Code)
 // ou por modelo-por-turno (Soul). Append-only em state/collector/series.jsonl,
 // espelhada em memória para os derivados.
-import { P, appendJsonl, readJsonl, readJson, type PriceTable } from "./store.ts";
+import { createReadStream, existsSync } from "node:fs";
+import { createInterface } from "node:readline";
+import { P, appendJsonl, readJson, type PriceTable } from "./store.ts";
 
 export type UsageRecord = {
   /** chave de deduplicação: message.id (CC) ou session:turn:model (Soul) */
@@ -29,30 +31,79 @@ export type UsageRecord = {
   priceTable: string;
 };
 
-export const records: UsageRecord[] = [];
-export const seen = new Set<string>();
+/** Só a janela quente fica em memória: o derive nunca olha além de ~31 dias (série diária de 30 dias).
+ *  O arquivo series.jsonl segue completo em disco. */
+export const RETENTION_MS = 35 * 24 * 3600_000;
 
-export function loadSeries(): void {
-  for (const r of readJsonl<UsageRecord>(P.series)) {
-    if (seen.has(r.id)) continue;
+export const records: UsageRecord[] = [];
+/** ids da janela quente (dedupe). Registro mais velho que a janela não é retido nem deduplicado em memória. */
+export const seen = new Set<string>();
+/** total de linhas na série (disco), inclusive as que saíram da memória — é o que o painel mostra. */
+export const stats = { total: 0 };
+
+// strings de baixa cardinalidade (conta, modelo, projeto, sessão, tabela de preço) compartilham uma instância
+const pool = new Map<string, string>();
+const intern = (v: string): string => {
+  let x = pool.get(v);
+  if (x === undefined) pool.set(v, (x = v));
+  return x;
+};
+function compact(r: UsageRecord): UsageRecord {
+  r.source = intern(r.source) as UsageRecord["source"];
+  r.account = intern(r.account);
+  r.model = intern(r.model);
+  r.project = intern(r.project);
+  r.session = intern(r.session);
+  r.priceTable = intern(r.priceTable);
+  return r;
+}
+
+/** Lê series.jsonl em fluxo (nunca o arquivo inteiro como string) e retém só a janela quente. */
+export async function loadSeries(): Promise<void> {
+  if (!existsSync(P.series)) return;
+  const cutoff = Date.now() - RETENTION_MS;
+  const rl = createInterface({ input: createReadStream(P.series, { encoding: "utf8" }), crlfDelay: Infinity });
+  for await (const line of rl) {
+    if (!line) continue;
+    let r: UsageRecord;
+    try {
+      r = JSON.parse(line) as UsageRecord;
+    } catch {
+      continue; // última linha rasgada durante append
+    }
+    stats.total++;
+    if (r.ts < cutoff || seen.has(r.id)) continue;
     seen.add(r.id);
-    records.push(r);
+    records.push(compact(r));
   }
   records.sort((a, b) => a.ts - b.ts);
 }
 
+/** Solta da memória o que saiu da janela quente (chamado a cada ciclo). */
+export function trimSeries(now = Date.now()): number {
+  const cutoff = now - RETENTION_MS;
+  let n = 0;
+  while (n < records.length && records[n].ts < cutoff) seen.delete(records[n++].id);
+  if (n > 0) records.splice(0, n);
+  return n;
+}
+
 export function addRecords(rows: UsageRecord[]): number {
+  const cutoff = Date.now() - RETENTION_MS;
   const fresh = rows.filter((r) => {
     if (seen.has(r.id)) return false;
-    seen.add(r.id);
+    // fora da janela quente: vai ao disco mas não é retido (não há como deduplicar sem o id em memória)
+    if (r.ts >= cutoff) seen.add(r.id);
     return true;
   });
   if (fresh.length === 0) return 0;
   appendJsonl(P.series, fresh);
-  for (const r of fresh) records.push(r);
+  stats.total += fresh.length;
+  const hot = fresh.filter((r) => r.ts >= cutoff);
+  for (const r of hot) records.push(compact(r));
   // a maioria chega em ordem; reordena só se preciso
   const n = records.length;
-  if (n > fresh.length && records[n - fresh.length - 1].ts > fresh[0].ts) records.sort((a, b) => a.ts - b.ts);
+  if (hot.length && n > hot.length && records[n - hot.length - 1].ts > hot[0].ts) records.sort((a, b) => a.ts - b.ts);
   return fresh.length;
 }
 
