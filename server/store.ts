@@ -51,10 +51,11 @@ export function readJson<T>(path: string, fallback: T): T {
   return JSON.parse(text) as T;
 }
 
-export function writeJson(path: string, value: unknown): void {
+/** `indent: 0` grava compacto (arquivos grandes reescritos a cada ciclo, como offsets.json). */
+export function writeJson(path: string, value: unknown, indent = 2): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n", "utf8");
+  writeFileSync(tmp, JSON.stringify(value, null, indent || undefined) + "\n", "utf8");
   renameSync(tmp, path);
 }
 

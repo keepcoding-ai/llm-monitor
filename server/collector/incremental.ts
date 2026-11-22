@@ -10,7 +10,7 @@ let dirty = false;
 
 export function saveOffsets(): void {
   if (!dirty) return;
-  writeJson(P.offsets, offsets);
+  writeJson(P.offsets, offsets, 0); // compacto: ~2,5 MB reescritos a cada ciclo com mudança
   dirty = false;
 }
 
