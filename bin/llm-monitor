@@ -49,8 +49,7 @@ open_browser() {
 }
 
 print_pids() {
-  echo "PIDs: port($PORT)=$(port_pids $PORT | tr '
-' ' ')"
+  echo "PIDs: port($PORT)=$(port_pids $PORT | paste -sd' ' -)"
 }
 
 cmd_help() {
