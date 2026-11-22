@@ -10,7 +10,7 @@
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
     "build:server": "node scripts/build-server.mjs",
-    "start": "node scripts/start.mjs",
+    "start": "node --max-old-space-size=96 --max-semi-space-size=1 dist-server/index.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test server/*.test.ts",
     "tauri:dev": "tauri dev",

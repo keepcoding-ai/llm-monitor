@@ -6,13 +6,43 @@ pasta (`state/`).
 
 ## Rodar
 
+### Uso diário: modo servido (leve, um processo)
+
 ```bash
 cd /d/atrium/workspace/llm-monitor
 npm install
+npm run build   # front (vite build -> dist/) + server (esbuild -> dist-server/index.mjs)
+npm start       # node do bundle; o próprio Hono serve a UI e a API na porta 4780
+```
+
+**O monitor abre em `http://localhost:4780/llm-monitor/`** (UI e API na mesma porta; API em
+`/llm-monitor/api/v1`). Não há processo Vite nem tsx em runtime. `npm start` roda `node --max-old-space-size=96 --max-semi-space-size=1 dist-server/index.mjs`
+(um único processo, ~130 MB de working set no Windows; o node vazio já gasta ~68 MB).
+Refaça `npm run build` depois de mexer em `src/` ou `server/`; widgets novos do chat dispensam build
+(o server compila cada versão sob demanda, ver `server/widget-serve.ts`).
+
+### Memória (modo servido)
+
+O server mantém em memória só a **janela quente** da série: 35 dias (`RETENTION_MS` em
+`server/series.ts`; o derive nunca olha além de ~31). `state/collector/series.jsonl` segue completo em
+disco e é lido em fluxo no boot; o painel mostra o total do disco. Registros com mais de 8 dias ficam
+enxutos (só ts, fonte, modelo, plataforma, tokens e custo — o que os agregados de 28/30 dias leem). O
+dedupe usa hash de 53 bits do id. O histórico da statusline é lido de forma incremental, só os últimos
+8 dias. Mexeu em `derive.ts` e vai ler outro campo de registro velho? Amplie `slim()` em `series.ts`.
+
+### Desenvolvimento (hot reload do front)
+
+```bash
 npm run dev
 ```
 
-Abra `http://127.0.0.1:4781/llm-monitor/`. API em `http://127.0.0.1:4780/llm-monitor/api/v1`.
+Abra `http://127.0.0.1:4781/llm-monitor/` (Vite). API em `http://127.0.0.1:4780/llm-monitor/api/v1`.
+O `dev` roda server via tsx + Vite (~600 MB): é só para desenvolver. Se existir `dist/`, o server
+do `dev` também serve a UI em 4780, mas o dia a dia é o `npm start`.
+
+Variáveis: `LLM_MONITOR_PORT` (porta, padrão 4780) e `LLM_MONITOR_STATE` (pasta de estado
+alternativa — use-a em instâncias de teste para não dividir o `series.jsonl` com a instância real).
+
 A primeira subida lê todo o histórico de `~/.claude/projects` (≈4 GB levou ~46 s). Depois, a
 cada ciclo só são examinados os arquivos mexidos nas últimas 24 h, e só os que cresceram são
 lidos. A varredura completa se repete a cada 5 min: uma sessão nova pode levar até 5 min para
@@ -174,7 +204,7 @@ npm run tauri:build   # gera src-tauri/target/release/llm-monitor-desktop.exe e 
 
 Como funciona:
 
-- **A UI vem do Vite**, a mesma URL do `npm run dev` (`http://127.0.0.1:4781/llm-monitor/`). Não há build estático porque os widgets (`widgets/<id>/v<n>.tsx`) são importados e transformados pelo Vite em tempo de execução.
+- **A UI vem do Vite** (`http://127.0.0.1:4781/llm-monitor/`, o modo `npm run dev`); o app desktop ainda não usa o modo servido (`http://localhost:4780/llm-monitor/`).
 - **Ao abrir**, checa a API (`4780`, `GET /llm-monitor/api/v1/auto-analysis`) e o front (`4781`). O que já responde é reusado; o que falta é iniciado com `node` + `tsx`/`vite` a partir do checkout, sem console (CREATE_NO_WINDOW). Uma tela de carregando fica até API, front e proxy do front responderem.
 - **Ao fechar**, encerra só a árvore dos PIDs que ela mesma iniciou (`taskkill /PID <pid> /T /F`). Server que já estava rodando antes continua de pé.
 - Logs dos filhos: `%TEMP%\llm-monitor-desktop-server.log` e `%TEMP%\llm-monitor-desktop-web.log`.

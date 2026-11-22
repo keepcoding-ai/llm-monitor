@@ -64,7 +64,7 @@ export async function readNewLines(
   let carry: Buffer = Buffer.alloc(0);
   let lines = 0;
   try {
-    const buf = Buffer.allocUnsafe(CHUNK);
+    const buf = Buffer.allocUnsafe(Math.min(CHUNK, st.size - pos)); // só o que há para ler (não 4 MB por arquivo mexido)
     while (pos < st.size) {
       const { bytesRead } = await fh.read(buf, 0, Math.min(CHUNK, st.size - pos), pos);
       if (bytesRead === 0) break;

@@ -63,6 +63,16 @@ const intern = (v: string): string => {
   if (x === undefined) pool.set(v, (x = v));
   return x;
 };
+/** Registros com mais de 8 dias só alimentam agregados de 28/30 dias (série diária, mapa de calor, "cabe",
+ *  semana): ts, source, model, platform, tokens e custo. Os demais campos (conta, projeto, sessão, side...)
+ *  só são lidos nos últimos 7 dias. Por isso o registro velho é recriado enxuto (~metade da memória) —
+ *  quem for ler outro campo de registro velho em derive.ts deve ampliar `slim`. */
+export const SLIM_AFTER_MS = 8 * 24 * 3600_000;
+function slim(r: UsageRecord): UsageRecord {
+  return { id: "", ts: r.ts, source: r.source, model: r.model, platform: r.platform, input: r.input, output: r.output, cacheWrite: r.cacheWrite, cacheRead: r.cacheRead, cost: r.cost } as UsageRecord;
+}
+let slimmed = 0; // records[0..slimmed) já são enxutos
+
 function compact(r: UsageRecord): UsageRecord {
   r.id = ""; // o id só serve ao dedupe (hash em `seen`); nenhum derivado o lê
   r.source = intern(r.source) as UsageRecord["source"];
@@ -95,14 +105,29 @@ export async function loadSeries(): Promise<void> {
     records.push(compact(r));
   }
   records.sort((a, b) => a.ts - b.ts);
+  slimmed = 0;
+  slimOld();
 }
 
-/** Solta da memória o que saiu da janela quente (chamado a cada ciclo). */
+/** Enxuga o prefixo de registros que passou de SLIM_AFTER_MS. */
+function slimOld(now = Date.now()): void {
+  const cut = now - SLIM_AFTER_MS;
+  while (slimmed < records.length && records[slimmed].ts < cut) {
+    records[slimmed] = slim(records[slimmed]);
+    slimmed++;
+  }
+}
+
+/** Solta da memória o que saiu da janela quente e enxuga o que envelheceu (chamado a cada ciclo). */
 export function trimSeries(now = Date.now()): number {
   const cutoff = now - RETENTION_MS;
   let n = 0;
   while (n < records.length && records[n].ts < cutoff) n++;
-  if (n > 0) records.splice(0, n);
+  if (n > 0) {
+    records.splice(0, n);
+    slimmed = Math.max(0, slimmed - n);
+  }
+  slimOld(now);
   return n;
 }
 
@@ -122,7 +147,11 @@ export function addRecords(rows: UsageRecord[]): number {
   for (const r of hot) records.push(compact(r)); // (depois do appendJsonl: o id já foi ao disco)
   // a maioria chega em ordem; reordena só se preciso
   const n = records.length;
-  if (hot.length && n > hot.length && records[n - hot.length - 1].ts > hot[0].ts) records.sort((a, b) => a.ts - b.ts);
+  const unordered = hot.some((r, i) => i > 0 && r.ts < hot[i - 1].ts) || (n > hot.length && records[n - hot.length - 1].ts > hot[0].ts);
+  if (hot.length && unordered) {
+    records.sort((a, b) => a.ts - b.ts);
+    slimmed = 0; // a ordem mudou: recontar o prefixo enxuto (slimOld é idempotente)
+  }
   return fresh.length;
 }
 
