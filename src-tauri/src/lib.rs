@@ -9,9 +9,12 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{Manager, RunEvent, Url, WebviewWindow};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -20,6 +23,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Filhos que ESTA instância criou. Server pré-existente nunca entra aqui.
 struct Spawned(Mutex<Vec<Child>>);
+
+/// true quando o usuário pediu "Sair"; sem isso, ExitRequested (última janela
+/// destruída) é vetado e o app segue vivo na bandeja.
+struct Quitting(AtomicBool);
 
 fn env_port(name: &str, default: u16) -> u16 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
@@ -147,6 +154,35 @@ fn boot(app: tauri::AppHandle) {
     let _ = win.navigate(url);
 }
 
+/// Abre/foca a janela. Fechar o X DESTRÓI a janela (libera os processos
+/// WebView2); aqui ela é recriada com o mesmo label/tamanho, já na URL do server.
+fn show_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let port = env_port("LLM_MONITOR_PORT", 4780);
+    let url: Url = format!("http://localhost:{port}/llm-monitor/").parse().unwrap();
+    let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url))
+        .title("LLM Monitor")
+        .inner_size(1280.0, 860.0)
+        .min_inner_size(380.0, 600.0)
+        .build();
+    match built {
+        Ok(w) => {
+            let _ = w.set_focus();
+        }
+        Err(e) => eprintln!("[desktop] falha ao recriar a janela: {e}"),
+    }
+}
+
+fn quit(app: &tauri::AppHandle) {
+    app.state::<Quitting>().0.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
 fn shutdown(app: &tauri::AppHandle) {
     let state = app.state::<Spawned>();
     let mut kids = state.0.lock().unwrap();
@@ -160,17 +196,45 @@ fn shutdown(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
         .manage(Spawned(Mutex::new(Vec::new())))
+        .manage(Quitting(AtomicBool::new(false)))
         .setup(|app| {
+            let open = MenuItem::with_id(app, "open", "Abrir", true, None::<&str>)?;
+            let exit = MenuItem::with_id(app, "quit", "Sair", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &exit])?;
+            let mut tray = TrayIconBuilder::with_id("main")
+                .tooltip("LLM Monitor")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, ev| match ev.id().as_ref() {
+                    "open" => show_window(app),
+                    "quit" => quit(app),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, ev| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                        show_window(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
             let h = app.handle().clone();
             std::thread::spawn(move || boot(h));
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("erro ao montar o app")
-        .run(|app, ev| {
-            if let RunEvent::Exit = ev {
-                shutdown(app)
+        .run(|app, ev| match ev {
+            // última janela destruída (X): segue na bandeja, node vivo
+            RunEvent::ExitRequested { api, .. } => {
+                if !app.state::<Quitting>().0.load(Ordering::SeqCst) {
+                    api.prevent_exit();
+                }
             }
+            RunEvent::Exit => shutdown(app),
+            _ => {}
         });
 }
