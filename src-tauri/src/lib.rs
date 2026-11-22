@@ -1,8 +1,6 @@
-// LLM Monitor desktop: ao abrir, garante o server (API Hono, 4780) e o front
-// (Vite, 4781) de pé e carrega a UI. A UI depende do Vite em tempo de execução
-// (widgets/<id>/v<n>.tsx são importados e transformados na hora — ver
-// server/widgets.ts), por isso não há build estático: a janela abre a mesma
-// URL do `npm run dev`.
+// LLM Monitor desktop: ao abrir, garante o modo servido (UM processo node,
+// `dist-server/index.mjs`, UI + API em 4780) e carrega a UI dele. Exige
+// `npm run build` prévio (dist/ + dist-server/); não depende mais do Vite.
 //
 // Ciclo de vida: o que já respondia antes é reusado e nunca é tocado. O que
 // esta janela sobe tem o PID guardado e, ao sair, só essa árvore morre
@@ -60,15 +58,15 @@ fn web_up(port: u16) -> bool {
     http_ok(port, "/llm-monitor/", "<html")
 }
 
-fn spawn_node(dir: &PathBuf, script: &str, args: &[&str], api: u16, web: u16, log: &str) -> std::io::Result<Child> {
+fn spawn_node(dir: &PathBuf, script: &str, args: &[&str], api: u16, log: &str) -> std::io::Result<Child> {
     let node = std::env::var("LLM_MONITOR_NODE").unwrap_or_else(|_| "node".into());
     let logf = std::fs::OpenOptions::new().create(true).append(true).open(std::env::temp_dir().join(log))?;
     let mut cmd = Command::new(node);
-    cmd.arg(dir.join(script))
+    cmd.args(["--max-old-space-size=96", "--max-semi-space-size=1"])
+        .arg(dir.join(script))
         .args(args)
         .current_dir(dir)
         .env("LLM_MONITOR_PORT", api.to_string())
-        .env("LLM_MONITOR_WEB_PORT", web.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::from(logf.try_clone()?))
         .stderr(Stdio::from(logf));
@@ -114,50 +112,37 @@ fn set_status(win: &WebviewWindow, msg: &str) {
 
 fn boot(app: tauri::AppHandle) {
     let win = app.get_webview_window("main").expect("janela main");
-    let (api, web) = (env_port("LLM_MONITOR_PORT", 4780), env_port("LLM_MONITOR_WEB_PORT", 4781));
+    let port = env_port("LLM_MONITOR_PORT", 4780);
     let dir = app_dir();
-    let mut started: Vec<String> = Vec::new();
     {
         let state = app.state::<Spawned>();
         let mut kids = state.0.lock().unwrap();
-        if api_up(api) {
-            eprintln!("[desktop] server já respondia em {api}; reusando (não será encerrado)");
+        if api_up(port) && web_up(port) {
+            eprintln!("[desktop] server já respondia em {port}; reusando (não será encerrado)");
         } else {
-            match spawn_node(&dir, "node_modules/tsx/dist/cli.mjs", &["server/index.ts"], api, web, "llm-monitor-desktop-server.log") {
+            if !dir.join("dist-server/index.mjs").exists() || !dir.join("dist/index.html").exists() {
+                return set_status(&win, "Build ausente: rode `npm run build` em llm-monitor.");
+            }
+            match spawn_node(&dir, "dist-server/index.mjs", &[], port, "llm-monitor-desktop-server.log") {
                 Ok(c) => {
                     eprintln!("[desktop] server iniciado, pid {}", c.id());
-                    started.push(format!("server pid {}", c.id()));
+                    set_status(&win, &format!("Subindo o server (pid {})…", c.id()));
                     kids.push(c);
                 }
                 Err(e) => return set_status(&win, &format!("Não consegui iniciar o server em {}: {e}", dir.display())),
             }
         }
-        if web_up(web) {
-            eprintln!("[desktop] front já respondia em {web}; reusando (não será encerrado)");
-        } else {
-            match spawn_node(&dir, "node_modules/vite/bin/vite.js", &[], api, web, "llm-monitor-desktop-web.log") {
-                Ok(c) => {
-                    eprintln!("[desktop] front iniciado, pid {}", c.id());
-                    started.push(format!("front pid {}", c.id()));
-                    kids.push(c);
-                }
-                Err(e) => return set_status(&win, &format!("Não consegui iniciar o front em {}: {e}", dir.display())),
-            }
-        }
-    }
-    if !started.is_empty() {
-        set_status(&win, &format!("Subindo o server ({})…", started.join(", ")));
     }
     let t0 = Instant::now();
-    // saudável = API direta + front + API pelo proxy do front (a UI de verdade funciona)
-    while !(api_up(api) && web_up(web) && api_up(web)) {
-        if t0.elapsed() > Duration::from_secs(120) {
+    // saudável = API + UI servidas pelo mesmo processo na mesma porta
+    while !(api_up(port) && web_up(port)) {
+        if t0.elapsed() > Duration::from_secs(60) {
             let tmp = std::env::temp_dir();
-            return set_status(&win, &format!("O server não respondeu em 2 min. Logs: {}", tmp.join("llm-monitor-desktop-*.log").display()));
+            return set_status(&win, &format!("O server não respondeu em 1 min. Log: {}", tmp.join("llm-monitor-desktop-server.log").display()));
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    let url: Url = format!("http://127.0.0.1:{web}/llm-monitor/").parse().unwrap();
+    let url: Url = format!("http://localhost:{port}/llm-monitor/").parse().unwrap();
     eprintln!("[desktop] saudável em {:?}; abrindo {url}", t0.elapsed());
     let _ = win.navigate(url);
 }
