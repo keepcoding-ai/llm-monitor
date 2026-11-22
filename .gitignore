@@ -6,3 +6,4 @@ state/*
 !state/models.json
 dev-dist/
 dist/
+dist-server/
