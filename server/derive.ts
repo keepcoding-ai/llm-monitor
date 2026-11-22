@@ -257,8 +257,14 @@ export function getLastPulse(): PulseRecord | null {
 }
 
 /** Ids de sessão de processos `claude` vivos neste macOS (vêm de --session-id). */
+let liveCache: { at: number; ids: Set<string> } | null = null;
 function liveClaudeSessions(): Set<string> {
+  // `ps -axo` não existe no Windows (a chamada sempre falhava): nada de spawn síncrono a cada snapshot
+  if (process.platform === "win32") return new Set();
+  // snapshots disparam por vários gatilhos; um `ps` por 10 s basta
+  if (liveCache && Date.now() - liveCache.at < 10_000) return liveCache.ids;
   const ids = new Set<string>();
+  liveCache = { at: Date.now(), ids };
   try {
     const out = execFileSync("ps", ["-axo", "command="], { encoding: "utf8", timeout: 3000 });
     for (const m of out.matchAll(/--session-id\s+([0-9a-f-]{36})/g)) ids.add(m[1]);
