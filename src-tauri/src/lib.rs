@@ -14,6 +14,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags};
 use tauri::{Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[cfg(windows)]
@@ -179,6 +180,7 @@ fn show_window(app: &tauri::AppHandle) {
 }
 
 fn quit(app: &tauri::AppHandle) {
+    let _ = app.save_window_state(StateFlags::all());
     app.state::<Quitting>().0.store(true, Ordering::SeqCst);
     app.exit(0);
 }
@@ -197,6 +199,7 @@ fn shutdown(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Spawned(Mutex::new(Vec::new())))
         .manage(Quitting(AtomicBool::new(false)))
         .setup(|app| {
