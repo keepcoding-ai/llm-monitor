@@ -37,7 +37,7 @@ process.stdin.on("end", () => {
   try { short = JSON.parse(readFileSync(join(STATE, "derived.json"), "utf8")).verdict?.short ?? ""; } catch { /* sem derivados ainda */ }
   // Fable ativo: alerta forte antes da linha (mesmo estilo da statusline do tether); os limites seguem depois.
   const probe = `${j.model?.id ?? ""} ${j.model?.display_name ?? ""}`;
-  const alert = /fable/i.test(probe) ? `\x1b[1;97;41m  ⚠ FABLE ATIVO: ${model.toUpperCase()} ⚠  \x1b[0m  ` : "";
+  const alert = /fable/i.test(probe) ? `\x1b[1;97;41m FABLE ATIVO: ${model.toUpperCase()} \x1b[0m  ` : "";
   if (rl && short) process.stdout.write(`${alert}${short} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}`);
   else process.stdout.write(`${alert}${rl ? `${model} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}` : `${model} · limites indisponíveis`}`);
 });
