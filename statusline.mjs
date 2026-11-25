@@ -35,6 +35,7 @@ process.stdin.on("end", () => {
   // Veredito do monitor (state/derived.json). Sem ele — monitor nunca subiu —, a linha fica como antes.
   let short = "";
   try { short = JSON.parse(readFileSync(join(STATE, "derived.json"), "utf8")).verdict?.short ?? ""; } catch { /* sem derivados ainda */ }
+  short = short.replace(/[←-⯿]️?\s*/g, "").trim();
   // Fable ativo: alerta forte antes da linha (mesmo estilo da statusline do tether); os limites seguem depois.
   const probe = `${j.model?.id ?? ""} ${j.model?.display_name ?? ""}`;
   const alert = /fable/i.test(probe) ? `\x1b[1;97;41m FABLE ATIVO: ${model.toUpperCase()} \x1b[0m  ` : "";
