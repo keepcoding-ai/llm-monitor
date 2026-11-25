@@ -41,7 +41,12 @@ process.stdin.on("end", () => {
   short = short.replace(/[←-⯿]️?\s*/g, "").trim();
   // Fable ativo: alerta forte antes da linha (mesmo estilo da statusline do tether); os limites seguem depois.
   const probe = `${j.model?.id ?? ""} ${j.model?.display_name ?? ""}`;
-  const alert = /fable/i.test(probe) ? `\x1b[1;97;41m FABLE ATIVO: ${model.toUpperCase()}${eff ? " / " + eff.toUpperCase() : ""} \x1b[0m  ` : "";
-  if (rl && short) process.stdout.write(`${alert}${tag} · ${short} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}`);
-  else process.stdout.write(`${alert}${rl ? `${tag} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}` : `${tag} · limites indisponíveis`}`);
+  // Dentro do tether (TETHER_SLOT_ID), a própria linha já desenha alerta, modelo e esforço: aqui fica só o resto.
+  const inTether = Boolean(process.env.TETHER_SLOT_ID);
+  const alert = !inTether && /fable/i.test(probe) ? `\x1b[1;97;41m FABLE ATIVO: ${model.toUpperCase()}${eff ? " / " + eff.toUpperCase() : ""} \x1b[0m  ` : "";
+  const head = inTether ? "" : `${tag}`;
+  const lim = `5h ${f(rl?.five_hour)} · sem ${f(rl?.seven_day)}`;
+  if (rl && short) process.stdout.write(`${alert}${inTether ? short : `${head} · ${short}`} · ${lim}`);
+  else if (rl) process.stdout.write(`${alert}${inTether ? lim : `${head} · ${lim}`}`);
+  else process.stdout.write(`${alert}${inTether ? "limites indisponíveis" : `${tag} · limites indisponíveis`}`);
 });
