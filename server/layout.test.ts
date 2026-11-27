@@ -37,9 +37,10 @@ test("cria as pages default, com ícones da lista fechada", () => {
 });
 
 test("cria os slots default na ordem, com id página-widget e tamanho", () => {
-  const l = migrateLayout(rev4, onDisk, NOW);
+  const withAgora = (w: string) => ({ acelerometro: [1], "curva-de-gasto": [1], "sessoes-agora": [1], "custo-por-hora": [1] } as Record<string, number[]>)[w] ?? onDisk(w);
+  const l = migrateLayout(rev4, withAgora, NOW);
   const view = (page: string) => l.slots.filter((s) => s.page === page).sort((a, b) => a.order - b.order).map((s) => `${s.id}:${s.w}x${s.h}`);
-  assert.deepEqual(view("agora"), ["agora-veredito:2x1", "agora-cabe:1x1", "agora-semana-ritmo:1x2", "agora-o-que-comeu:1x4", "agora-janelas:1x4"]);
+  assert.deepEqual(view("agora"), ["agora-semana-ritmo:2x2", "agora-acelerometro:1x2", "agora-curva-de-gasto:1x2", "agora-veredito:2x2", "agora-sessoes-agora:1x2", "agora-custo-por-hora:1x2", "agora-janelas:1x2"]);
   assert.deepEqual(view("ciclo"), ["ciclo-semana-ritmo:3x2", "ciclo-o-que-comeu:2x4", "ciclo-janelas:1x4"]);
   assert.equal(view("reserva").length, 1);
   assert.equal(view("avisos").length, 1);
@@ -166,7 +167,7 @@ test("mover slot para outra página grid põe no fim; recusa página não-grid",
   const s = updateSlot(l, "agora-janelas", { page: "ciclo" });
   assert.equal(s.page, "ciclo");
   assert.ok(l.slots.filter((x) => x.page === "ciclo" && x !== s).every((x) => x.order < s.order));
-  assert.throws(() => updateSlot(l, "agora-cabe", { page: "ajustes" }), /grade/);
+  assert.throws(() => updateSlot(l, "agora-veredito", { page: "ajustes" }), /grade/);
   assert.throws(() => updateSlot(l, "nada", { w: 1 }), /não encontrado/);
 });
 
@@ -176,7 +177,7 @@ test("reordenar slots exige o conjunto exato da página", () => {
   reorderSlots(l, "ciclo", ids);
   assert.deepEqual(l.slots.filter((s) => s.page === "ciclo").sort((a, b) => a.order - b.order).map((s) => s.id), ids);
   assert.throws(() => reorderSlots(l, "ciclo", ids.slice(1)), /exatamente/);
-  assert.throws(() => reorderSlots(l, "ciclo", [...ids, "agora-cabe"]), /exatamente/);
+  assert.throws(() => reorderSlots(l, "ciclo", [...ids, "agora-veredito"]), /exatamente/);
   assert.throws(() => reorderSlots(l, "ciclo", [ids[0], ids[0], ids[1]]), /exatamente/);
 });
 
@@ -190,9 +191,9 @@ test("reordenar páginas exige o conjunto exato", () => {
 
 test("apagar slot; apagar página remove os slots; página fixa é recusada", () => {
   const l = fixture();
-  deleteSlot(l, "agora-cabe");
-  assert.ok(!l.slots.some((s) => s.id === "agora-cabe"));
-  assert.throws(() => deleteSlot(l, "agora-cabe"), /não encontrado/);
+  deleteSlot(l, "agora-veredito");
+  assert.ok(!l.slots.some((s) => s.id === "agora-veredito"));
+  assert.throws(() => deleteSlot(l, "agora-veredito"), /não encontrado/);
   const p = createPage(l, { title: "Nova", icon: "Star" });
   addSlot(l, p.id, { widget: "cabe" });
   assert.equal(deletePage(l, p.id), 1);

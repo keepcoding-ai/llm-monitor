@@ -38,11 +38,13 @@ const DEFAULT_PAGES: PageDef[] = [
 
 type DefaultSlot = { page: string; widget: string; w: SlotSpec["w"]; h: SlotSpec["h"] };
 const DEFAULT_SLOTS: DefaultSlot[] = [
-  { page: "agora", widget: "veredito", w: 2, h: 1 },
-  { page: "agora", widget: "cabe", w: 1, h: 1 },
-  { page: "agora", widget: "semana-ritmo", w: 1, h: 2 },
-  { page: "agora", widget: "o-que-comeu", w: 1, h: 4 },
-  { page: "agora", widget: "janelas", w: 1, h: 4 },
+  { page: "agora", widget: "semana-ritmo", w: 2, h: 2 },
+  { page: "agora", widget: "acelerometro", w: 1, h: 2 },
+  { page: "agora", widget: "curva-de-gasto", w: 1, h: 2 },
+  { page: "agora", widget: "veredito", w: 2, h: 2 },
+  { page: "agora", widget: "sessoes-agora", w: 1, h: 2 },
+  { page: "agora", widget: "custo-por-hora", w: 1, h: 2 },
+  { page: "agora", widget: "janelas", w: 1, h: 2 },
   { page: "ciclo", widget: "semana-ritmo", w: 3, h: 2 },
   { page: "ciclo", widget: "o-que-comeu", w: 2, h: 4 },
   { page: "ciclo", widget: "janelas", w: 1, h: 4 },
