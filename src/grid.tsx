@@ -1,7 +1,8 @@
 // Grade das páginas `grid`: colunas iguais e linhas de meia altura, só em CSS.
 // 1 coluna; 2 a partir de @2xl; 3 a partir de @5xl — container query (não media query), então o
 // painel de chat aberto, que estreita o <main>, reduz as colunas sozinho.
-// `grid-auto-rows` = meia coluna menos meio gap ⇒ 2 linhas + 1 gap = largura da coluna: célula 1×2 é quadrada.
+// `grid-auto-rows` = meia coluna menos meio gap, vezes `--row-k`: com k=1 (celular) 2 linhas + 1 gap = largura da coluna (célula 1×2 quadrada);
+// k desce em telas largas (0.75 em 2 colunas, 0.55 em 3) para a página caber sem rolar.
 // h vai de 1 a 8 meias-linhas; w/h multiplicam (com os gaps).
 import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties } from "react";
 import {
@@ -152,8 +153,8 @@ export function SlotCard({ spec, cell, still }: { spec: SlotSpec; cell?: boolean
   const Builtin = meta?.source === "builtin" ? BUILTINS[spec.widget] : undefined;
   return (
     <motion.section layout={!reduce && !still} transition={{ type: "spring", stiffness: 300, damping: 30 }} data-slot-id={spec.id} className={cell ? "h-full min-h-0 min-w-0" : "min-w-0"}>
-      <Card className={`h-full gap-3 py-4 transition-shadow duration-500 ${cell ? "flex flex-col overflow-hidden" : ""} ${fresh ? "ring-2 ring-x-highlight" : ""}`}>
-        <CardHeader className="px-4">
+      <Card className={`h-full gap-2 py-3 transition-shadow duration-500 ${cell ? "flex flex-col overflow-hidden" : ""} ${fresh ? "ring-2 ring-x-highlight" : ""}`}>
+        <CardHeader className="px-3">
           <CardTitle className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             {spec.title ?? meta?.title ?? spec.widget}
             <AnimatePresence>
@@ -173,7 +174,7 @@ export function SlotCard({ spec, cell, still }: { spec: SlotSpec; cell?: boolean
             </AnimatePresence>
           </CardTitle>
         </CardHeader>
-        <CardContent className={`relative px-4 ${cell ? "@container [container-type:size] min-h-0 flex-1 overflow-y-auto overscroll-contain" : ""}`}>
+        <CardContent className={`relative px-3 ${cell ? "@container [container-type:size] min-h-0 flex-1 overflow-y-auto overscroll-contain" : ""}`}>
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
               key={spec.version}
@@ -409,9 +410,9 @@ export function PageGrid({ page, editing = false }: { page: string; editing?: bo
   const slots = useSlots(page);
   useReveal(slots);
   if (!layout) return <Skeleton className="h-40" />;
-  const cls ="grid grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:1rem] @2xl:[--cols:2] @5xl:[--cols:3] @5xl:[--gap:1.5rem]";
+  const cls ="grid grid-cols-[repeat(var(--cols),minmax(0,1fr))] gap-(--gap) [--cols:1] [--gap:0.75rem] [--row-k:1] @2xl:[--cols:2] @2xl:[--row-k:0.75] @5xl:[--cols:3] @5xl:[--row-k:0.55]";
   // row = (column width − gap) / 2, so two rows plus the gap between them are exactly one column wide
-  const style = { gridAutoRows: "calc(((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols) - var(--gap)) / 2)" };
+  const style = { gridAutoRows: "calc(((100cqw - (var(--cols) - 1) * var(--gap)) / var(--cols) - var(--gap)) / 2 * var(--row-k))" };
   return (
     <div className="@container">
       {!editing && slots.length === 0 && (
