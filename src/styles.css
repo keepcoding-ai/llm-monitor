@@ -191,3 +191,11 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .stale-fade { transition: none; }
 }
+
+/* Densidade: escala tipográfica compacta. Os tokens padrão do Tailwind (xl 1.25, 2xl 1.5, 3xl 1.875 rem)
+ * ficavam grandes para um painel; xs/sm/base (corpo, ≥ 12 px) seguem intactos. */
+@theme {
+  --text-xl: 1.125rem;
+  --text-2xl: 1.25rem;
+  --text-3xl: 1.5rem;
+}

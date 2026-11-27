@@ -269,7 +269,7 @@ function Rail() {
   const w5 = v?.windows.find((w) => w.id === "5h")?.usedPct;
   const w7 = v?.windows.find((w) => w.id === "7d")?.usedPct;
   return (
-    <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col gap-6 border-r px-4 py-6 xl:flex tv:w-64">
+    <aside className="sticky top-0 hidden h-dvh w-48 shrink-0 flex-col gap-4 border-r px-3 py-4 xl:flex tv:w-56">
       <HomeMark className="tv:text-xl" />
       <nav className="flex flex-col gap-0.5" aria-label="Navegação">
         {pages.map((p) => {
@@ -284,7 +284,7 @@ function Rail() {
                 go(p.id);
               }}
               aria-current={active ? "page" : undefined}
-              className={`relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring tv:text-base ${active ? "font-medium text-foreground" : "text-muted-foreground"}`}
+              className={`relative flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring tv:text-base ${active ? "font-medium text-foreground" : "text-muted-foreground"}`}
             >
               {active && <motion.span layoutId="rail-active" className="absolute inset-0 -z-10 rounded-md bg-muted" />}
               <Icon className="size-4 tv:size-5" weight={active ? "fill" : "regular"} /> {p.title}
@@ -430,9 +430,9 @@ function useChatOpen(tier: ReturnType<typeof useTier>) {
 
 /** `pinned` (edit mode): the row sticks to the top of <main>, full-bleed and opaque, so the edit actions stay reachable while the grid scrolls. */
 function PageTitle({ children, actions, pinned }: { children: ReactNode; actions?: ReactNode; pinned?: boolean }) {
-  const pin = "sticky top-0 z-30 -mx-4 flex-nowrap border-b bg-background px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:-mx-6 md:px-6 xl:-mx-8 xl:px-8 tv:-mx-12 tv:px-12";
+  const pin = "sticky top-0 z-30 -mx-4 flex-nowrap border-b bg-background px-4 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] md:-mx-4 md:px-4 xl:-mx-5 xl:px-5 tv:-mx-8 tv:px-8";
   return (
-    <div className={`mb-4 flex items-center gap-x-3 gap-y-2 ${pinned ? pin : "flex-wrap"}`}>
+    <div className={`mb-3 flex items-center gap-x-3 gap-y-2 ${pinned ? pin : "flex-wrap"}`}>
       <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight tv:text-2xl">{children}</h2>
       {actions}
     </div>
@@ -525,8 +525,8 @@ export function App() {
       <ThemeRoot />
       <div className="flex min-h-dvh">
         <Rail />
-        <main className="@container min-w-0 flex-1 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:px-6 xl:px-8 xl:pb-8 tv:px-12">
-          <header className="mb-4 flex items-center justify-between gap-2 xl:mb-6 xl:pt-3">
+        <main className="@container min-w-0 flex-1 px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:px-4 xl:px-5 xl:pb-4 tv:px-8">
+          <header className="mb-3 flex items-center justify-between gap-2 xl:mb-3 xl:pt-2">
             <div className="flex min-w-0 items-center gap-3">
               <HomeMark className="xl:hidden" />
               <span className="hidden md:inline-flex xl:inline-flex">
