@@ -21,6 +21,7 @@ process.stdin.on("end", () => {
     model: j.model?.display_name ?? j.model?.id,
     keys: Object.keys(j),
     rateLimits: rl,
+    effort: typeof j.effort === "string" ? j.effort : (j.effort?.level ?? j.effort?.value ?? ""),
   };
   try {
     mkdirSync(STATE, { recursive: true });
@@ -32,12 +33,20 @@ process.stdin.on("end", () => {
   } catch { /* nunca quebrar a linha de status do Claude Code */ }
   const f = (w) => { const v = Number(w?.used_percentage ?? w?.utilization); return Number.isFinite(v) ? `${Math.round(v)}%` : "?"; };
   const model = snap.model ?? "";
+  const eff = snap.effort ?? "";
+  const tag = `${model}${eff ? " " + eff : ""}`;
   // Veredito do monitor (state/derived.json). Sem ele — monitor nunca subiu —, a linha fica como antes.
   let short = "";
   try { short = JSON.parse(readFileSync(join(STATE, "derived.json"), "utf8")).verdict?.short ?? ""; } catch { /* sem derivados ainda */ }
+  short = short.replace(/[←-⯿]️?\s*/g, "").trim();
   // Fable ativo: alerta forte antes da linha (mesmo estilo da statusline do tether); os limites seguem depois.
   const probe = `${j.model?.id ?? ""} ${j.model?.display_name ?? ""}`;
-  const alert = /fable/i.test(probe) ? `\x1b[1;97;41m  ⚠ FABLE ATIVO: ${model.toUpperCase()} ⚠  \x1b[0m  ` : "";
-  if (rl && short) process.stdout.write(`${alert}${short} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}`);
-  else process.stdout.write(`${alert}${rl ? `${model} · 5h ${f(rl.five_hour)} · sem ${f(rl.seven_day)}` : `${model} · limites indisponíveis`}`);
+  // Dentro do tether (TETHER_SLOT_ID), a própria linha já desenha alerta, modelo e esforço: aqui fica só o resto.
+  const inTether = Boolean(process.env.TETHER_SLOT_ID);
+  const alert = !inTether && /fable/i.test(probe) ? `\x1b[1;97;41m FABLE ATIVO: ${model.toUpperCase()}${eff ? " / " + eff.toUpperCase() : ""} \x1b[0m  ` : "";
+  const head = inTether ? "" : `${tag}`;
+  const lim = `5h ${f(rl?.five_hour)} · sem ${f(rl?.seven_day)}`;
+  if (rl && short) process.stdout.write(`${alert}${inTether ? short : `${head} · ${short}`} · ${lim}`);
+  else if (rl) process.stdout.write(`${alert}${inTether ? lim : `${head} · ${lim}`}`);
+  else process.stdout.write(`${alert}${inTether ? "limites indisponíveis" : `${tag} · limites indisponíveis`}`);
 });
