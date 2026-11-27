@@ -7,7 +7,7 @@
 // (taskkill /PID <pid> /T /F) — nunca por nome.
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -33,11 +33,23 @@ fn env_port(name: &str, default: u16) -> u16 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
-/// Checkout do llm-monitor: LLM_MONITOR_DIR, senão a pasta do repo onde foi buildado.
+fn has_build(dir: &Path) -> bool {
+    dir.join("dist-server/index.mjs").exists() && dir.join("dist/index.html").exists()
+}
+
+/// Checkout do llm-monitor: o primeiro candidato com build serve — LLM_MONITOR_DIR,
+/// a pasta da compilação, os ancestrais do executável. Sem nenhum, a da compilação.
 fn app_dir() -> PathBuf {
-    std::env::var("LLM_MONITOR_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/..")))
+    let built = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    let mut cands: Vec<PathBuf> = Vec::new();
+    if let Ok(v) = std::env::var("LLM_MONITOR_DIR") {
+        cands.push(PathBuf::from(v));
+    }
+    cands.push(built.clone());
+    if let Ok(exe) = std::env::current_exe() {
+        cands.extend(exe.ancestors().skip(1).map(Path::to_path_buf));
+    }
+    cands.into_iter().find(|d| has_build(d)).unwrap_or(built)
 }
 
 /// GET simples em 127.0.0.1; true se 200 e o corpo contém `needle`.
@@ -128,8 +140,8 @@ fn boot(app: tauri::AppHandle) {
         if api_up(port) && web_up(port) {
             eprintln!("[desktop] server já respondia em {port}; reusando (não será encerrado)");
         } else {
-            if !dir.join("dist-server/index.mjs").exists() || !dir.join("dist/index.html").exists() {
-                return set_status(&win, "Build ausente: rode `npm run build` em llm-monitor.");
+            if !has_build(&dir) {
+                return set_status(&win, &format!("Build ausente em {}: rode `npm run build` em llm-monitor, ou aponte LLM_MONITOR_DIR para a pasta do llm-monitor.", dir.display()));
             }
             match spawn_node(&dir, "dist-server/index.mjs", &[], port, "llm-monitor-desktop-server.log") {
                 Ok(c) => {
